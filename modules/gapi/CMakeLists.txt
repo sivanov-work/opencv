@@ -176,6 +176,8 @@ if(HAVE_GAPI_ONEVPL)
         src/streaming/onevpl/onevpl_file_data_provider.cpp
         src/streaming/onevpl/onevpl_cfg_params.cpp
         src/streaming/onevpl/onevpl_data_provider_interface_exception.cpp
+        src/streaming/onevpl/accelerators/surface/cpu_frame_adapter.cpp
+        src/streaming/onevpl/accelerators/surface/surface.cpp
     )
 endif()
 
