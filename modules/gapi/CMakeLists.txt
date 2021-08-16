@@ -186,6 +186,7 @@ if(HAVE_GAPI_ONEVPL)
         src/streaming/onevpl/engine/processing_engine_base.cpp
         src/streaming/onevpl/engine/decode/decode_engine_legacy.cpp
         src/streaming/onevpl/engine/decode/decode_session.cpp
+        src/streaming/onevpl/onevpl_utils.cpp
     )
 endif()
 
