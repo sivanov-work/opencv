@@ -181,6 +181,11 @@ if(HAVE_GAPI_ONEVPL)
         src/streaming/onevpl/accelerators/surface/surface_pool.cpp
         src/streaming/onevpl/accelerators/accel_policy_cpu.cpp
         src/streaming/onevpl/accelerators/accel_policy_dx11.cpp
+
+        src/streaming/onevpl/engine/engine_session.cpp
+        src/streaming/onevpl/engine/processing_engine_base.cpp
+        src/streaming/onevpl/engine/decode/decode_engine_legacy.cpp
+        src/streaming/onevpl/engine/decode/decode_session.cpp
     )
 endif()
 

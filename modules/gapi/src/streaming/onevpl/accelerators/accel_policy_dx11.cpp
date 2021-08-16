@@ -9,6 +9,7 @@
 //#include "streaming/vpl/vpl_utils.hpp"
 #include "streaming/onevpl/accelerators/surface/cpu_frame_adapter.hpp"
 #include "streaming/onevpl/accelerators/surface/surface.hpp"
+#include "streaming/onevpl/onevpl_utils.hpp"
 #include "logger.hpp"
 
 #ifdef HAVE_DIRECTX
@@ -47,8 +48,8 @@ void VPLDX11AccelerationPolicy::init(session_t session) {
     mfxStatus sts = MFXVideoCORE_GetHandle(session, MFX_HANDLE_D3D11_DEVICE, reinterpret_cast<mfxHDL*>(&hw_handle));
     if (sts != MFX_ERR_NONE)
     {
-        throw std::logic_error("Cannot create VPLDX11AccelerationPolicy, MFXVideoCORE_GetHandle error: ");/* +
-                               mfxstatus_to_string(sts)); TODO*/
+        throw std::logic_error("Cannot create VPLDX11AccelerationPolicy, MFXVideoCORE_GetHandle error: " +
+                               mfxstatus_to_string(sts));
     }
 
     //MFXVideoCORE_SetFrameAllocator(session, mfxFrameAllocator instance)

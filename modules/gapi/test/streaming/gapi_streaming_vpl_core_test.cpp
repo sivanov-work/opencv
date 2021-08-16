@@ -12,6 +12,7 @@
 #include <chrono>
 #include <future>
 
+#include <opencv2/gapi/media.hpp>
 #include <opencv2/gapi/cpu/core.hpp>
 #include <opencv2/gapi/cpu/imgproc.hpp>
 
@@ -32,12 +33,75 @@
 #include "streaming/onevpl/accelerators/surface/surface.hpp"
 #include "streaming/onevpl/accelerators/surface/cpu_frame_adapter.hpp"
 #include "streaming/onevpl/accelerators/accel_policy_cpu.hpp"
-//#include "streaming/onevpl/accelerators/accel_policy_dx11.hpp"
+#include <opencv2/gapi/streaming/onevpl/onevpl_data_provider_interface.hpp>
+#include "streaming/onevpl/engine/processing_engine_base.hpp"
+#include "streaming/onevpl/engine/engine_session.hpp"
 
 namespace opencv_test
 {
 namespace
 {
+
+struct EmptyDataProvider : public cv::gapi::wip::IDataProvider {
+
+    size_t provide_data(size_t, void*) override {
+        return 0;
+    }
+    bool empty() const override {
+        return true;
+    }
+};
+
+struct TestProcessingSession : public cv::gapi::wip::EngineSession {
+    TestProcessingSession(mfxSession mfx_session) :
+        EngineSession(mfx_session, {}) {
+    }
+};
+
+struct TestProcessingEngine: public cv::gapi::wip::ProcessingEngineBase {
+
+    size_t pipeline_stage_num = 0;
+
+    TestProcessingEngine(std::unique_ptr<cv::gapi::wip::VPLAccelerationPolicy>&& accel) :
+        cv::gapi::wip::ProcessingEngineBase(std::move(accel)) {
+        using cv::gapi::wip::EngineSession;
+        create_pipeline(
+            // 0)
+            [this] (EngineSession&) -> ExecutionStatus
+            {
+                pipeline_stage_num = 0;
+                return ExecutionStatus::Continue;
+            },
+            // 1)
+            [this] (EngineSession&) -> ExecutionStatus
+            {
+                pipeline_stage_num = 1;
+                return ExecutionStatus::Continue;
+            },
+            // 2)
+            [this] (EngineSession&) -> ExecutionStatus
+            {
+                pipeline_stage_num = 2;
+                return ExecutionStatus::Continue;
+            },
+            // 3)
+            [this] (EngineSession&) -> ExecutionStatus
+            {
+                pipeline_stage_num = 3;
+                ready_frames.emplace(cv::MediaFrame());
+                return ExecutionStatus::Processed;
+            }
+        );
+    }
+
+    void initialize_session(mfxSession mfx_session,
+                            cv::gapi::wip::DecoderParams&&,
+                            std::shared_ptr<cv::gapi::wip::IDataProvider>) override {
+
+        register_session<TestProcessingSession>(mfx_session);
+    }
+};
+
 TEST(OneVPL_Source_Surface, InitSurface)
 {
     using namespace cv::gapi::wip;
@@ -346,6 +410,37 @@ TEST(OneVPL_Source_CPU_Accelerator, PoolProduceConcurrentConsume)
     free_surface_count = acceleration_policy->get_free_surface_count(key);
     worker_thread.join();
     EXPECT_TRUE(free_surface_count >= free_surface_count_prev);
+}
+
+TEST(OneVPL_Source_ProcessingEngine, Init)
+{
+    using namespace cv::gapi::wip;
+    std::unique_ptr<cv::gapi::wip::VPLAccelerationPolicy> accel;
+    TestProcessingEngine engine(std::move(accel));
+
+    mfxSession mfx_session{};
+    engine.initialize_session(mfx_session, DecoderParams{}, std::shared_ptr<IDataProvider>{});
+
+    EXPECT_EQ(engine.get_ready_frames_count(), 0);
+    ProcessingEngineBase::ExecutionStatus ret = engine.process(mfx_session);
+    EXPECT_EQ(ret, ProcessingEngineBase::ExecutionStatus::Continue);
+    EXPECT_EQ(engine.pipeline_stage_num, 0);
+
+    ret = engine.process(mfx_session);
+    EXPECT_EQ(ret, ProcessingEngineBase::ExecutionStatus::Continue);
+    EXPECT_EQ(engine.pipeline_stage_num, 1);
+
+    ret = engine.process(mfx_session);
+    EXPECT_EQ(ret, ProcessingEngineBase::ExecutionStatus::Continue);
+    EXPECT_EQ(engine.pipeline_stage_num, 2);
+
+    ret = engine.process(mfx_session);
+    EXPECT_EQ(ret, ProcessingEngineBase::ExecutionStatus::Processed);
+    EXPECT_EQ(engine.pipeline_stage_num, 3);
+    EXPECT_EQ(engine.get_ready_frames_count(), 1);
+
+    Data frame;
+    engine.get_frame(frame);
 }
 }
 } // namespace opencv_test
