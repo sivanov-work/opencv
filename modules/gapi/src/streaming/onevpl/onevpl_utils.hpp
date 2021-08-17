@@ -41,17 +41,6 @@ mfxU32 cstr_to_mfx_version(const char* cstr);
 std::string mfxstatus_to_string(mfxStatus err);
 
 std::ostream& operator<< (std::ostream& out, const mfxImplDescription& idesc);
-
-template<typename ValueType>
-std::vector<ValueType> get_params_from_string(const std::string& str);
-
-template <typename ReturnType>
-struct ParamCreator {
-    template<typename ValueType>
-    ReturnType create(const std::string& name, ValueType&& value);
-};
-
-mfxVariant cfg_param_to_mfx_variant(const oneVPL_cfg_param& value);
 } // namespace wip
 } // namespace gapi
 } // namespace cv

@@ -12,6 +12,7 @@
 #include "streaming/onevpl/accelerators/accel_policy_dx11.hpp"
 #include "streaming/onevpl/accelerators/accel_policy_cpu.hpp"
 #include "streaming/onevpl/onevpl_utils.hpp"
+#include "streaming/onevpl/onevpl_cfg_params_parser.hpp"
 
 #include "logger.hpp"
 
