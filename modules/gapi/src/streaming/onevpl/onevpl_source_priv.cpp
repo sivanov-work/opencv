@@ -256,6 +256,10 @@ DecoderParams OneVPLSource::Priv::create_decoder_from_file(const oneVPL_cfg_para
     }
 
     mfxVariant decoder = cfg_param_to_mfx_variant(decoder_cfg);
+    // according to oneVPL documentation references
+    // https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_disp_api_struct.html
+    // mfxVariant is an `union` type and considered different meaning for different param ids
+    // So CodecId has U32 data type
     bitstream.CodecId = decoder.Data.U32;
 
     mfxStatus sts = ReadEncodedStream(bitstream, provider);
