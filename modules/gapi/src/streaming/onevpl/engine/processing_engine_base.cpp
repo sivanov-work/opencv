@@ -53,7 +53,7 @@ ProcessingEngineBase::ExecutionStatus ProcessingEngineBase::process(mfxSession s
         execution_table.erase(session);
     }
 
-    if(status == ExecutionStatus::Processed) {
+    if (status == ExecutionStatus::Processed) {
         sessions.erase(sess_it);
         execution_table.erase(session);
     }
@@ -61,7 +61,7 @@ ProcessingEngineBase::ExecutionStatus ProcessingEngineBase::process(mfxSession s
     return status;
 }
 
-const char * ProcessingEngineBase::status_to_string(ExecutionStatus status)
+const char* ProcessingEngineBase::status_to_string(ExecutionStatus status)
 {
     switch(status) {
         case ExecutionStatus::Continue: return "CONTINUE";
@@ -116,7 +116,8 @@ mfxStatus ReadEncodedStream(mfxBitstream &bs, std::shared_ptr<IDataProvider>& da
         *(p0++) = *(p1++);
     }
     bs.DataOffset = 0;
-    bs.DataLength += (mfxU32)data_provider->provide_data(bs.MaxLength - bs.DataLength, bs.Data + bs.DataLength);
+    bs.DataLength += static_cast<mfxU32>(data_provider->provide_data(bs.MaxLength - bs.DataLength,
+                                                                     bs.Data + bs.DataLength));
     if (bs.DataLength == 0)
         return MFX_ERR_MORE_DATA;
 
