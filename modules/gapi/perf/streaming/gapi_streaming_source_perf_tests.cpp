@@ -15,10 +15,8 @@ namespace opencv_test
 using namespace perf;
 
 const std::string files[] = {
-    "highgui/video/big_buck_bunny.avi",
-    "highgui/video/big_buck_bunny.mov",
-    "highgui/video/big_buck_bunny.mp4",
-    "highgui/video/big_buck_bunny.wmv"
+    "highgui/video/big_buck_bunny.h265",
+    "highgui/video/big_buck_bunny.h264",
 };
 
 const std::string codec[] = {
@@ -38,7 +36,7 @@ PERF_TEST_P_(OneVPLSourcePerfTest, TestPerformance)
   using namespace cv::gapi::wip;
 
   const auto params = GetParam();
-  const source_t& src = get<0>(params);
+  source_t src = findDataFile(get<0>(params));
   codec_t type = get<1>(params);
 
   std::vector<oneVPL_cfg_param> cfg_params {
@@ -60,7 +58,7 @@ PERF_TEST_P_(VideoCapSourcePerfTest, TestPerformance)
 {
   using namespace cv::gapi::wip;
 
-  const source_t& src = GetParam();
+  source_t src = findDataFile(GetParam());
   auto source_ptr = make_src<GCaptureSource>(src);
   Data out;
   TEST_CYCLE()
@@ -71,9 +69,11 @@ PERF_TEST_P_(VideoCapSourcePerfTest, TestPerformance)
   SANITY_CHECK_NOTHING();
 }
 
-INSTANTIATE_TEST_CASE_P(OneVPLSourcePerfTest, OneVPLSourcePerfTest,
-                        Values(source_description_t(files[0], codec[0])));
+INSTANTIATE_TEST_CASE_P(Streaming, OneVPLSourcePerfTest,
+                        Values(source_description_t(files[0], codec[0]),
+                               source_description_t(files[1], codec[1])));
 
-INSTANTIATE_TEST_CASE_P(VideoCapSourcePerfTest, VideoCapSourcePerfTest,
-                        Values(files[0]));
+INSTANTIATE_TEST_CASE_P(Streaming, VideoCapSourcePerfTest,
+                        Values(files[0],
+                               files[1]));
 } // namespace opencv_test
