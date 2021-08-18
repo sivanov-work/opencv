@@ -9,6 +9,7 @@
 
 #include "streaming/onevpl/onevpl_source_priv.hpp"
 #include "streaming/onevpl/engine/decode/decode_engine_legacy.hpp"
+#include "streaming/onevpl/engine/decode/decode_engine_async.hpp"
 #include "streaming/onevpl/accelerators/accel_policy_dx11.hpp"
 #include "streaming/onevpl/accelerators/accel_policy_cpu.hpp"
 #include "streaming/onevpl/onevpl_utils.hpp"
@@ -205,7 +206,8 @@ OneVPLSource::Priv::Priv(std::shared_ptr<IDataProvider> provider, const std::vec
                 }
                 else
                 {
-                    engine.reset(new VPLLegacyDecodeEngine(std::move(acceleration)));
+                    //engine.reset(new VPLLegacyDecodeEngine(std::move(acceleration)));
+                    engine.reset(new VPLLegacyDecodeEngineAsync(std::move(acceleration)));
                 }
             }
 
