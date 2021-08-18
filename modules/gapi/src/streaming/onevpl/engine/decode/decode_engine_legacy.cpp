@@ -138,6 +138,13 @@ VPLLegacyDecodeEngine::VPLLegacyDecodeEngine(std::unique_ptr<VPLAccelerationPoli
                                                     my_sess.procesing_surface_ptr.lock()->get_handle(),
                                                     &my_sess.output_surface_ptr,
                                                     &my_sess.sync);
+
+            if (!pending_frames.empty())
+            {
+                auto data = pending_frames.front();
+                pending_frames.pop();
+                ready_frames.push(std::move(data));
+            }
             return ExecutionStatus::Continue;
         },
         // 3) Wait for ASYNC decode result
@@ -227,7 +234,7 @@ void VPLLegacyDecodeEngine::on_frame_ready(LegacyDecodeSession& sess)
     // manage memory ownership rely on acceleration policy
     auto frame_adapter = acceleration_policy->create_frame_adapter(sess.decoder_pool_id,
                                                                    sess.output_surface_ptr);
-    ready_frames.emplace(cv::MediaFrame(std::move(frame_adapter)), sess.generate_frame_meta());
+    pending_frames.emplace(cv::MediaFrame(std::move(frame_adapter)), sess.generate_frame_meta());
 }
 
 ProcessingEngineBase::ExecutionStatus VPLLegacyDecodeEngine::process_error(mfxStatus status, LegacyDecodeSession& sess)
@@ -236,6 +243,13 @@ ProcessingEngineBase::ExecutionStatus VPLLegacyDecodeEngine::process_error(mfxSt
 
     switch (status) {
         case MFX_ERR_NONE:
+            try {
+                sess.swap_surface(*this);
+            } catch (const std::exception& ex) {
+                GAPI_LOG_WARNING(nullptr, "[" << sess.session << "] error: " << ex.what() <<
+                                          "Abort");
+                ExecutionStatus::Failed;
+            }
             return ExecutionStatus::Continue;
         case MFX_ERR_MORE_DATA: // The function requires more bitstream at input before decoding can proceed
             if (!sess.data_provider || sess.data_provider->empty()) {

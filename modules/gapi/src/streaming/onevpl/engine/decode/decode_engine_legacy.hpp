@@ -39,6 +39,8 @@ private:
     ExecutionStatus process_error(mfxStatus status, LegacyDecodeSession& sess);
 
     void on_frame_ready(LegacyDecodeSession& sess);
+
+    frames_container_t pending_frames;
 };
 } // namespace wip
 } // namespace gapi
