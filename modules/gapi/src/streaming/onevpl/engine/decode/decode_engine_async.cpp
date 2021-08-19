@@ -115,7 +115,7 @@ VPLLegacyDecodeEngineAsync::VPLLegacyDecodeEngineAsync(std::unique_ptr<VPLAccele
 
     GAPI_LOG_INFO(nullptr, "Create Legacy Decode Engine");
     create_pipeline(
-        // 1) Reade File
+        // 1) Read File
         [this] (EngineSession& sess) -> ExecutionStatus
         {
             LegacyDecodeSessionAsync &my_sess = static_cast<LegacyDecodeSessionAsync&>(sess);
@@ -125,34 +125,37 @@ VPLLegacyDecodeEngineAsync::VPLLegacyDecodeEngineAsync(std::unique_ptr<VPLAccele
             }
             return ExecutionStatus::Continue;
         },
-        // 2) enqueue ASYNC decode
+        // 2) enqueue ASYNC decode operation
         [this] (EngineSession& sess) -> ExecutionStatus
         {
             LegacyDecodeSessionAsync &my_sess = static_cast<LegacyDecodeSessionAsync&>(sess);
 
+            // prepare sync object for new surface
+            LegacyDecodeSessionAsync::op_handle_t sync_pair{};
+
+            // queue qecode operation
             my_sess.last_status =
                     MFXVideoDECODE_DecodeFrameAsync(my_sess.session,
                                                     my_sess.last_status == MFX_ERR_NONE
                                                         ? &my_sess.stream
                                                         : nullptr, /* No more data to read, start decode draining mode*/
                                                     my_sess.procesing_surface_ptr.lock()->get_handle(),
+                                                    &sync_pair.second,
+                                                    &sync_pair.first);
 
-                                                    &my_sess.sync_queue.back().second,
-                                                    &my_sess.sync_queue.back().first);
-
+            // process wait-like statuses in-place
             while (my_sess.last_status == MFX_ERR_MORE_SURFACE ||
                    my_sess.last_status == MFX_WRN_DEVICE_BUSY) {
                 try {
                     if (my_sess.last_status == MFX_ERR_MORE_SURFACE) {
-                        my_sess.swap_surface(*this, false);
+                        my_sess.swap_surface(*this);
                     }
                     my_sess.last_status =
                     MFXVideoDECODE_DecodeFrameAsync(my_sess.session,
                                                    &my_sess.stream,
                                                     my_sess.procesing_surface_ptr.lock()->get_handle(),
-
-                                                    &my_sess.sync_queue.back().second,
-                                                    &my_sess.sync_queue.back().first);
+                                                    &sync_pair.second,
+                                                    &sync_pair.first);
 
                 } catch (const std::exception& ex) {
                     GAPI_LOG_WARNING(nullptr, "[" << my_sess.session << "] error: " << ex.what() <<
@@ -160,11 +163,12 @@ VPLLegacyDecodeEngineAsync::VPLLegacyDecodeEngineAsync(std::unique_ptr<VPLAccele
                 }
             }
 
-            if(my_sess.last_status != MFX_ERR_NONE) {
-                GAPI_LOG_WARNING(nullptr, "my_sess.sync_queue size: " << my_sess.sync_queue.size() <<
-                                        "my_sess.sync_queue.front().first: " <<
-                                        my_sess.sync_queue.back().first <<
-                                        "status: " << mfxstatus_to_string(my_sess.last_status));
+            if (my_sess.last_status == MFX_ERR_NONE) {
+                my_sess.sync_queue.emplace(sync_pair);
+            } else if (MFX_ERR_MORE_DATA != my_sess.last_status) /* suppress MFX_ERR_MORE_DATA warning */ {
+                GAPI_LOG_WARNING(nullptr, "pending ops count: " << my_sess.sync_queue.size() <<
+                                        ", sync id: " << sync_pair.first <<
+                                        ", status: " << mfxstatus_to_string(my_sess.last_status));
             }
             return ExecutionStatus::Continue;
         },
@@ -172,18 +176,16 @@ VPLLegacyDecodeEngineAsync::VPLLegacyDecodeEngineAsync(std::unique_ptr<VPLAccele
         [this] (EngineSession& sess) -> ExecutionStatus
         {
             LegacyDecodeSessionAsync& my_sess = static_cast<LegacyDecodeSessionAsync&>(sess);
-            if (!my_sess.sync_queue.empty()/*sess.last_status == MFX_ERR_NONE*/) // Got 1 decoded frame
+            if (!my_sess.sync_queue.empty()) // FIFO: check the oldest async operation complete
             {
-                GAPI_LOG_DEBUG(nullptr, "my_sess.sync_queue size: " << my_sess.sync_queue.size() <<
-                                        "my_sess.sync_queue.front().first: " <<
-                                        my_sess.sync_queue.front().first);
-                sess.last_status = MFXVideoCORE_SyncOperation(sess.session, my_sess.sync_queue.front().first, 0);
-                /*GAPI_LOG_WARNING(nullptr, "my_sess.sync_queue size: " << my_sess.sync_queue.size() <<
-                                        "my_sess.sync_queue.front().first: " <<
-                                        my_sess.sync_queue.front().first <<
-                                        "status: " << mfxstatus_to_string(sess.last_status));*/
+                LegacyDecodeSessionAsync::op_handle_t& pending_op = my_sess.sync_queue.front();
+                sess.last_status = MFXVideoCORE_SyncOperation(sess.session, pending_op.first, 0);
+
+                GAPI_LOG_DEBUG(nullptr, "pending ops count: " << my_sess.sync_queue.size() <<
+                                        ", sync id:  " << pending_op.first <<
+                                        ", status: " << mfxstatus_to_string(my_sess.last_status));
                 if (MFX_ERR_NONE == sess.last_status) {
-                    on_frame_ready(my_sess, my_sess.sync_queue.front().second);
+                    on_frame_ready(my_sess, pending_op.second);
                 }
             }
             return ExecutionStatus::Continue;
@@ -279,7 +281,6 @@ ProcessingEngineBase::ExecutionStatus VPLLegacyDecodeEngineAsync::process_error(
                 GAPI_LOG_WARNING(nullptr, "[" << sess.session << "] error: " << ex.what() <<
                                           "Abort");
             }
-            //return ExecutionStatus::Continue;
         }
         case MFX_ERR_MORE_DATA: // The function requires more bitstream at input before decoding can proceed
             if (!sess.data_provider || sess.data_provider->empty()) {

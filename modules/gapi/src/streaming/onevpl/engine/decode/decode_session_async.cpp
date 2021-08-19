@@ -35,7 +35,7 @@ LegacyDecodeSessionAsync::~LegacyDecodeSessionAsync()
     MFXVideoDECODE_Close(session);
 }
 
-void LegacyDecodeSessionAsync::swap_surface(VPLLegacyDecodeEngineAsync& engine, bool new_async) {
+void LegacyDecodeSessionAsync::swap_surface(VPLLegacyDecodeEngineAsync& engine) {
     VPLAccelerationPolicy* acceleration_policy = engine.get_accel();
     GAPI_Assert(acceleration_policy && "Empty acceleration_policy");
     try {
@@ -48,13 +48,6 @@ void LegacyDecodeSessionAsync::swap_surface(VPLLegacyDecodeEngineAsync& engine, 
                                 ", new: "<< cand->get_handle());
 
         procesing_surface_ptr = cand;
-
-        // prepare sync object for new surface
-        if (new_async) {
-            decode_handle_t sync_pair{};
-            sync_queue.emplace(sync_pair);
-        }
-
     } catch (const std::exception& ex) {
         GAPI_LOG_WARNING(nullptr, "[" << session << "] error: " << ex.what() <<
                                    "Abort");

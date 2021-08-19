@@ -34,7 +34,7 @@ public:
     ~LegacyDecodeSessionAsync();
     using EngineSession::EngineSession;
 
-    void swap_surface(VPLLegacyDecodeEngineAsync& engine, bool new_async = true);
+    void swap_surface(VPLLegacyDecodeEngineAsync& engine);
     void init_surface_pool(VPLAccelerationPolicy::pool_key_t key);
 
     mfxVideoParam mfx_decoder_param;
@@ -47,8 +47,8 @@ private:
 
     std::weak_ptr<Surface> procesing_surface_ptr;
 
-    using decode_handle_t = std::pair<mfxSyncPoint, mfxFrameSurface1*>;
-    std::queue<decode_handle_t> sync_queue;
+    using op_handle_t = std::pair<mfxSyncPoint, mfxFrameSurface1*>;
+    std::queue<op_handle_t> sync_queue;
     int64_t decoded_frames_count;
 };
 } // namespace wip
