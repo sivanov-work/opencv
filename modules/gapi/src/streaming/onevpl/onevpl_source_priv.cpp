@@ -205,7 +205,7 @@ OneVPLSource::Priv::Priv(std::shared_ptr<IDataProvider> provider, const std::vec
                 }
                 else
                 {
-                    engine.reset(new VPLLegacyDecodeEngine(std::move(acceleration)));
+                    engine.reset(new VPLLegacyDecodeEngineAsync(std::move(acceleration)));
                 }
             }
 

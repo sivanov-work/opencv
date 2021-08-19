@@ -29,8 +29,10 @@ public:
     // GAPI_EXPORTS for tests
     GAPI_EXPORTS void push_back(surface_ptr_t &&surf);
     GAPI_EXPORTS void reserve(size_t size);
-    GAPI_EXPORTS size_t size() const;
+    GAPI_EXPORTS size_t total_size() const;
+    GAPI_EXPORTS size_t available_size() const;
     GAPI_EXPORTS void clear();
+
     GAPI_EXPORTS surface_ptr_t find_free();
     GAPI_EXPORTS surface_ptr_t find_by_handle(mfxFrameSurface1* handle);
 private:
