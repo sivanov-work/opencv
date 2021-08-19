@@ -4,10 +4,11 @@
 //
 // Copyright (C) 2021 Intel Corporation
 
-#ifndef GAPI_STREAMING_ONVPL_ENGINE_DECODE_DECODE_SESSION_HPP
-#define GAPI_STREAMING_ONVPL_ENGINE_DECODE_DECODE_SESSION_HPP
+#ifndef GAPI_STREAMING_ONVPL_ENGINE_DECODE_DECODE_SESSION_ASYNC_HPP
+#define GAPI_STREAMING_ONVPL_ENGINE_DECODE_DECODE_SESSION_ASYNC_HPP
 #include <stdio.h>
 #include <memory>
+#include <queue>
 
 #include "streaming/onevpl/engine/engine_session.hpp"
 #include "streaming/onevpl/accelerators/accel_policy_interface.hpp"
@@ -25,15 +26,15 @@ struct IDataProvider;
 class Surface;
 struct VPLAccelerationPolicy;
 
-class LegacyDecodeSession : public EngineSession {
+class LegacyDecodeSessionAsync : public EngineSession {
 public:
-    friend class VPLLegacyDecodeEngine;
+    friend class VPLLegacyDecodeEngineAsync;
 
-    LegacyDecodeSession(mfxSession sess, DecoderParams&& decoder_param, std::shared_ptr<IDataProvider> provider);
-    ~LegacyDecodeSession();
+    LegacyDecodeSessionAsync(mfxSession sess, DecoderParams&& decoder_param, std::shared_ptr<IDataProvider> provider);
+    ~LegacyDecodeSessionAsync();
     using EngineSession::EngineSession;
 
-    void swap_surface(VPLLegacyDecodeEngine& engine);
+    void swap_surface(VPLLegacyDecodeEngineAsync& engine);
     void init_surface_pool(VPLAccelerationPolicy::pool_key_t key);
 
     mfxVideoParam mfx_decoder_param;
@@ -45,12 +46,13 @@ private:
     mfxFrameAllocRequest request;
 
     std::weak_ptr<Surface> procesing_surface_ptr;
-    mfxFrameSurface1* output_surface_ptr;
 
+    using op_handle_t = std::pair<mfxSyncPoint, mfxFrameSurface1*>;
+    std::queue<op_handle_t> sync_queue;
     int64_t decoded_frames_count;
 };
 } // namespace wip
 } // namespace gapi
 } // namespace cv
 #endif // HAVE_ONEVPL
-#endif // GAPI_STREAMING_ONVPL_ENGINE_DECODE_DECODE_SESSION_HPP
+#endif // GAPI_STREAMING_ONVPL_ENGINE_DECODE_DECODE_SESSION_ASYNC_HPP

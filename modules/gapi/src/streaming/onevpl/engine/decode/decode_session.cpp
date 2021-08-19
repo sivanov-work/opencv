@@ -17,33 +17,34 @@
 namespace cv {
 namespace gapi {
 namespace wip {
-LegacyDecodeSession::LegacyDecodeSession(mfxSession sess,
+LegacyDecodeSessionAsync::LegacyDecodeSessionAsync(mfxSession sess,
                                          DecoderParams&& decoder_param,
                                          std::shared_ptr<IDataProvider> provider) :
     EngineSession(sess, std::move(decoder_param.stream)),
     mfx_decoder_param(std::move(decoder_param.param)),
     data_provider(std::move(provider)),
     procesing_surface_ptr(),
-    output_surface_ptr(),
+    sync_queue(),
     decoded_frames_count()
 {
 }
 
-LegacyDecodeSession::~LegacyDecodeSession()
+LegacyDecodeSessionAsync::~LegacyDecodeSessionAsync()
 {
     GAPI_LOG_INFO(nullptr, "Close Decode for session: " << session);
     MFXVideoDECODE_Close(session);
 }
 
-void LegacyDecodeSession::swap_surface(VPLLegacyDecodeEngine& engine) {
+void LegacyDecodeSessionAsync::swap_surface(VPLLegacyDecodeEngineAsync& engine) {
     VPLAccelerationPolicy* acceleration_policy = engine.get_accel();
     GAPI_Assert(acceleration_policy && "Empty acceleration_policy");
-    auto old_locked = procesing_surface_ptr.lock();
     try {
         auto cand = acceleration_policy->get_free_surface(decoder_pool_id).lock();
 
         GAPI_LOG_DEBUG(nullptr, "[" << session << "] swap surface"
-                                ", old: " << (old_locked ? old_locked->get_handle() : nullptr) <<
+                                ", old: " << (!procesing_surface_ptr.expired()
+                                              ? procesing_surface_ptr.lock()->get_handle()
+                                              : nullptr) <<
                                 ", new: "<< cand->get_handle());
 
         procesing_surface_ptr = cand;
@@ -53,12 +54,12 @@ void LegacyDecodeSession::swap_surface(VPLLegacyDecodeEngine& engine) {
     }
 }
 
-void LegacyDecodeSession::init_surface_pool(VPLAccelerationPolicy::pool_key_t key) {
+void LegacyDecodeSessionAsync::init_surface_pool(VPLAccelerationPolicy::pool_key_t key) {
     GAPI_Assert(key && "Init decode pull with empty key");
     decoder_pool_id = key;
 }
 
-Data::Meta LegacyDecodeSession::generate_frame_meta() {
+Data::Meta LegacyDecodeSessionAsync::generate_frame_meta() {
     const auto now = std::chrono::system_clock::now();
     const auto dur = std::chrono::duration_cast<std::chrono::microseconds>
                 (now.time_since_epoch());
