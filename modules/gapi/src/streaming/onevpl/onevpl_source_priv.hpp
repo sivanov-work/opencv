@@ -25,9 +25,14 @@
 
 #include <vpl/mfxvideo.h>
 
+#include "streaming/onevpl/engine/processing_engine_base.hpp"
+
 namespace cv {
 namespace gapi {
 namespace wip {
+
+struct VPLAccelerationPolicy;
+class ProcessingEngineBase;
 
 struct OneVPLSource::Priv
 {
@@ -35,12 +40,28 @@ struct OneVPLSource::Priv
                   const std::vector<oneVPL_cfg_param>& params);
     ~Priv();
 
+    static const std::vector<oneVPL_cfg_param>& getDefaultCfgParams();
+    const std::vector<oneVPL_cfg_param>& getCfgParams() const;
+
     bool pull(cv::gapi::wip::Data& data);
     GMetaArg descr_of() const;
 private:
     Priv();
+    DecoderParams create_decoder_from_file(const oneVPL_cfg_param& decoder,
+                                           std::shared_ptr<IDataProvider> provider);
+    std::unique_ptr<VPLAccelerationPolicy> initializeHWAccel();
+
     mfxLoader mfx_handle;
+    mfxImplDescription *mfx_impl_desription;
+    std::vector<mfxConfig> mfx_handle_configs;
+    std::vector<oneVPL_cfg_param> cfg_params;
+
+    mfxSession mfx_session;
+
+    cv::GFrameDesc description;
     bool description_is_valid;
+
+    std::unique_ptr<ProcessingEngineBase> engine;
 };
 } // namespace wip
 } // namespace gapi
