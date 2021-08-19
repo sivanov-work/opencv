@@ -140,9 +140,12 @@ VPLLegacyDecodeEngineAsync::VPLLegacyDecodeEngineAsync(std::unique_ptr<VPLAccele
                                                     &my_sess.sync_queue.back().second,
                                                     &my_sess.sync_queue.back().first);
 
-            while (my_sess.last_status == MFX_ERR_MORE_SURFACE) {
+            while (my_sess.last_status == MFX_ERR_MORE_SURFACE ||
+                   my_sess.last_status == MFX_WRN_DEVICE_BUSY) {
                 try {
-                    my_sess.swap_surface(*this, false);
+                    if (my_sess.last_status == MFX_ERR_MORE_SURFACE) {
+                        my_sess.swap_surface(*this, false);
+                    }
                     my_sess.last_status =
                     MFXVideoDECODE_DecodeFrameAsync(my_sess.session,
                                                    &my_sess.stream,
@@ -155,6 +158,13 @@ VPLLegacyDecodeEngineAsync::VPLLegacyDecodeEngineAsync(std::unique_ptr<VPLAccele
                     GAPI_LOG_WARNING(nullptr, "[" << my_sess.session << "] error: " << ex.what() <<
                                             "Abort");
                 }
+            }
+
+            if(my_sess.last_status != MFX_ERR_NONE) {
+                GAPI_LOG_WARNING(nullptr, "my_sess.sync_queue size: " << my_sess.sync_queue.size() <<
+                                        "my_sess.sync_queue.front().first: " <<
+                                        my_sess.sync_queue.back().first <<
+                                        "status: " << mfxstatus_to_string(my_sess.last_status));
             }
             return ExecutionStatus::Continue;
         },
@@ -336,7 +346,8 @@ ProcessingEngineBase::ExecutionStatus VPLLegacyDecodeEngineAsync::process_error(
                                           "Abort");
             }
         default:
-            GAPI_LOG_WARNING(nullptr, "Unknown status code: " << mfxstatus_to_string(status));
+            GAPI_LOG_WARNING(nullptr, "Unknown status code: " << mfxstatus_to_string(status) <<
+                                      ", decoded frames: " << sess.decoded_frames_count);
             break;
     }
 

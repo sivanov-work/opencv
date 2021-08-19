@@ -16,6 +16,7 @@ using namespace perf;
 
 const std::string files[] = {
     "highgui/video/big_buck_bunny.h265",
+    "highgui/video/Putin.raw",
     "highgui/video/big_buck_bunny.h264",
 };
 
@@ -45,10 +46,13 @@ PERF_TEST_P_(OneVPLSourcePerfTest, TestPerformance)
   };
 
   auto source_ptr = make_vpl_src(src, cfg_params);
+  //auto def_source_ptr = make_src<GCaptureSource>(src);
   Data out;
+  //Data def_out;
   TEST_CYCLE()
   {
       source_ptr->pull(out);
+      //def_source_ptr->pull(def_out);
   }
 
   SANITY_CHECK_NOTHING();
@@ -71,9 +75,11 @@ PERF_TEST_P_(VideoCapSourcePerfTest, TestPerformance)
 
 INSTANTIATE_TEST_CASE_P(Streaming, OneVPLSourcePerfTest,
                         Values(source_description_t(files[0], codec[0]),
-                               source_description_t(files[1], codec[1])));
+                               source_description_t(files[1], codec[0]),
+                               source_description_t(files[2], codec[1])));
 
 INSTANTIATE_TEST_CASE_P(Streaming, VideoCapSourcePerfTest,
                         Values(files[0],
-                               files[1]));
+                               files[1],
+                               files[2]));
 } // namespace opencv_test

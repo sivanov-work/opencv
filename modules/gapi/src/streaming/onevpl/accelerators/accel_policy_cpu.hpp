@@ -15,6 +15,7 @@
 #ifdef HAVE_ONEVPL
 #include <vpl/mfxvideo.h>
 #include "streaming/onevpl/accelerators/accel_policy_interface.hpp"
+#define TEST_PERF
 #ifdef TEST_PERF
 #include "streaming/onevpl/accelerators/surface/surface_pool.hpp"
 #endif // TEST_PERF
