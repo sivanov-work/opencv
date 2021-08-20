@@ -41,6 +41,8 @@ mfxU32 cstr_to_mfx_version(const char* cstr);
 std::string mfxstatus_to_string(mfxStatus err);
 
 std::ostream& operator<< (std::ostream& out, const mfxImplDescription& idesc);
+
+const char* ext_mem_frame_type_to_cstr(int type);
 } // namespace wip
 } // namespace gapi
 } // namespace cv

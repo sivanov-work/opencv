@@ -14,6 +14,9 @@
 #include "streaming/onevpl/onevpl_utils.hpp"
 #include "logger.hpp"
 
+#define ONEVPL_STRINGIFY_CASE(value)                                           \
+    case value: return #value;
+
 namespace cv {
 namespace gapi {
 namespace wip {
@@ -397,6 +400,30 @@ std::string mfxstatus_to_string(mfxStatus err) {
     std::string ret("<unknown ");
     ret += std::to_string(err) + ">";
     return ret;
+}
+
+const char* ext_mem_frame_type_to_cstr(int type) {
+    switch(type) {
+        ONEVPL_STRINGIFY_CASE(MFX_MEMTYPE_DXVA2_DECODER_TARGET);
+        ONEVPL_STRINGIFY_CASE(MFX_MEMTYPE_DXVA2_PROCESSOR_TARGET);
+        //ONEVPL_STRINGIFY_CASE(MFX_MEMTYPE_VIDEO_MEMORY_DECODER_TARGET);
+        //ONEVPL_STRINGIFY_CASE(MFX_MEMTYPE_VIDEO_MEMORY_PROCESSOR_TARGET);
+        ONEVPL_STRINGIFY_CASE(MFX_MEMTYPE_SYSTEM_MEMORY);
+        ONEVPL_STRINGIFY_CASE(MFX_MEMTYPE_RESERVED1);
+        ONEVPL_STRINGIFY_CASE(MFX_MEMTYPE_FROM_ENCODE);
+        ONEVPL_STRINGIFY_CASE(MFX_MEMTYPE_FROM_DECODE);
+        ONEVPL_STRINGIFY_CASE(MFX_MEMTYPE_FROM_VPPIN);
+        ONEVPL_STRINGIFY_CASE(MFX_MEMTYPE_FROM_VPPOUT);
+        ONEVPL_STRINGIFY_CASE(MFX_MEMTYPE_FROM_ENC);
+        ONEVPL_STRINGIFY_CASE(MFX_MEMTYPE_INTERNAL_FRAME);
+        ONEVPL_STRINGIFY_CASE(MFX_MEMTYPE_EXTERNAL_FRAME);
+        ONEVPL_STRINGIFY_CASE(MFX_MEMTYPE_EXPORT_FRAME);
+        //ONEVPL_STRINGIFY_CASE(MFX_MEMTYPE_SHARED_RESOURCE);
+        ONEVPL_STRINGIFY_CASE(MFX_MEMTYPE_VIDEO_MEMORY_ENCODER_TARGET);
+        default:
+            break;
+    }
+    throw std::logic_error(std::string("Invalid \"ExtMemFrameType\" type:") + std::to_string(type));
 }
 } // namespace wip
 } // namespace gapi

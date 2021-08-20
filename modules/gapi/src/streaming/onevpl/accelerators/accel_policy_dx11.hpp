@@ -22,6 +22,7 @@
 #ifdef HAVE_DIRECTX
 #ifdef HAVE_D3D11
     #define D3D11_NO_HELPERS
+    #define NOMINMAX
     #include <d3d11.h>
     #include <codecvt>
     #include "opencv2/core/directx.hpp"
@@ -51,6 +52,7 @@ struct VPLDX11AccelerationPolicy final: public VPLAccelerationPolicy
 
 private:
     ID3D11Device *hw_handle;
+    mfxFrameAllocator allocator;
 
 #ifdef CPU_ACCEL_ADAPTER
     std::unique_ptr<VPLCPUAccelerationPolicy> adapter;
@@ -59,6 +61,7 @@ private:
 } // namespace wip
 } // namespace gapi
 } // namespace cv
+#undef NOMINMAX
 #endif // HAVE_D3D11
 #endif // HAVE_DIRECTX
 
