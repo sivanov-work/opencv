@@ -29,62 +29,19 @@ namespace cv {
 namespace gapi {
 namespace wip {
 
-mfxStatus fa_alloc(mfxHDL pthis, mfxFrameAllocRequest *request, mfxFrameAllocResponse *response) {
-   GAPI_LOG_DEBUG(nullptr, "Requested Type: " << ext_mem_frame_type_to_cstr(request->Type));
-   if (!(request->Type & MFX_MEMTYPE_SYSTEM_MEMORY))
-      return MFX_ERR_UNSUPPORTED;
-   if (request->Info.FourCC!=MFX_FOURCC_NV12)
-      return MFX_ERR_UNSUPPORTED;
-
-   GAPI_LOG_DEBUG(nullptr, "Requested NumFrameMin: " << request->NumFrameMin);
-
-   for (int i=0;i<request->NumFrameMin;i++) {
-      //mid_struct *mmid=(mid_struct *)malloc(sizeof(mid_struct));
-      //mmid->width=ALIGN32(request->Info.Width);
-      //mmid->height=ALIGN32(request->Info.Height);
-      //mmid->base=(mfxU8*)malloc(mmid->width*mmid->height*3/2);
-      response->mids[i] = nullptr;
-   }
-   return MFX_ERR_NONE;
-}
-
-mfxStatus fa_lock(mfxHDL pthis, mfxMemId mid, mfxFrameData *ptr) {
-    GAPI_LOG_DEBUG(nullptr, "");
-/*   mid_struct *mmid=(mid_struct *)mid;
-   ptr->Pitch=mmid->width;
-   ptr->Y=mmid->base;
-   ptr->U=ptr->Y+mmid->width*mmid->height;
-   ptr->V=ptr->U+1;
-*/
-   return MFX_ERR_NONE;
-}
-
-mfxStatus fa_unlock(mfxHDL pthis, mfxMemId mid, mfxFrameData *ptr) {
-    GAPI_LOG_DEBUG(nullptr, "");
-   if (ptr) ptr->Y=ptr->U=ptr->V=ptr->A=0;
-   return MFX_ERR_NONE;
-}
-
-mfxStatus fa_gethdl(mfxHDL pthis, mfxMemId mid, mfxHDL *handle) {
-    GAPI_LOG_DEBUG(nullptr, "");
-   return MFX_ERR_UNSUPPORTED;
-}
-
-mfxStatus fa_free(mfxHDL pthis, mfxFrameAllocResponse *response) {
-    GAPI_LOG_DEBUG(nullptr, "");
-   /*for (int i=0;i<response->NumFrameActual;i++) {
-      mid_struct *mmid=(mid_struct *)response->mids[i];
-      free(mmid->base); free(mmid);
-   }*/
-   return MFX_ERR_NONE;
-}
-
-
-
 VPLDX11AccelerationPolicy::VPLDX11AccelerationPolicy() :
     hw_handle(),
     allocator()
 {
+    // setup dx11 allocator
+    memset(&allocator, 0, sizeof(mfxFrameAllocator));
+    allocator.Alloc = alloc_cb;
+    allocator.Lock = lock_cb;
+    allocator.Unlock = unlock_cb;
+    allocator.GetHDL = get_hdl_cb;
+    allocator.Free = free_cb;
+    allocator.pthis = this;
+
 #ifdef CPU_ACCEL_ADAPTER
     adapter.reset(new VPLCPUAccelerationPolicy);
 #endif
@@ -100,8 +57,7 @@ VPLDX11AccelerationPolicy::~VPLDX11AccelerationPolicy()
 }
 
 void VPLDX11AccelerationPolicy::init(session_t session) {
-
-//Create device
+    //Create device
     UINT creationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 
 #if defined(_DEBUG)
@@ -144,10 +100,8 @@ void VPLDX11AccelerationPolicy::init(session_t session) {
     }
 
     // oneVPL recommendation
-    ID3D11DeviceContext     *pD11Context;
     ID3D11Multithread       *pD11Multithread;
-    hw_handle->GetImmediateContext(&pD11Context);
-    pD11Context->QueryInterface(IID_PPV_ARGS(&pD11Multithread));
+    context->QueryInterface(IID_PPV_ARGS(&pD11Multithread));
     pD11Multithread->SetMultithreadProtected(true);
 
     mfxStatus sts = MFXVideoCORE_SetHandle(session, MFX_HANDLE_D3D11_DEVICE, (mfxHDL) hw_handle);
@@ -156,19 +110,6 @@ void VPLDX11AccelerationPolicy::init(session_t session) {
         throw std::logic_error("Cannot create VPLDX11AccelerationPolicy, MFXVideoCORE_SetHandle error: " +
                                mfxstatus_to_string(sts));
     }
-
-    sts = MFXVideoCORE_GetHandle(session, MFX_HANDLE_D3D11_DEVICE, reinterpret_cast<mfxHDL*>(&hw_handle));
-    if (sts != MFX_ERR_NONE)
-    {
-        throw std::logic_error("Cannot create VPLDX11AccelerationPolicy, MFXVideoCORE_GetHandle error: " +
-                               mfxstatus_to_string(sts));
-    }
-
-    allocator.Alloc = fa_alloc;
-    allocator.Lock = fa_lock;
-    allocator.Unlock = fa_unlock;
-    allocator.GetHDL = fa_gethdl;
-    allocator.Free = fa_free;
 
     sts = MFXVideoCORE_SetFrameAllocator(session, &allocator);
     if (sts != MFX_ERR_NONE)
@@ -232,6 +173,79 @@ cv::MediaFrame::AdapterPtr VPLDX11AccelerationPolicy::create_frame_adapter(pool_
     (void)key;
     (void)surface;
     throw std::runtime_error("VPLDX11AccelerationPolicy::create_frame_adapter() is not implemented");
+}
+
+mfxStatus VPLDX11AccelerationPolicy::alloc_cb(mfxHDL pthis, mfxFrameAllocRequest *request,
+                                              mfxFrameAllocResponse *response) {
+    if (!pthis) {
+        return MFX_ERR_MEMORY_ALLOC;
+    }
+
+    VPLDX11AccelerationPolicy *self = static_cast<VPLDX11AccelerationPolicy *>(pthis);
+    return self->on_alloc(request, response);
+}
+
+mfxStatus VPLDX11AccelerationPolicy::lock_cb(mfxHDL pthis, mfxMemId mid, mfxFrameData *ptr) {
+    if (!pthis) {
+        return MFX_ERR_MEMORY_ALLOC;
+    }
+
+    VPLDX11AccelerationPolicy *self = static_cast<VPLDX11AccelerationPolicy *>(pthis);
+    return self->on_lock(mid, ptr);
+}
+
+mfxStatus VPLDX11AccelerationPolicy::unlock_cb(mfxHDL pthis, mfxMemId mid, mfxFrameData *ptr) {
+    if (!pthis) {
+        return MFX_ERR_MEMORY_ALLOC;
+    }
+
+    VPLDX11AccelerationPolicy *self = static_cast<VPLDX11AccelerationPolicy *>(pthis);
+    return self->on_unlock(mid, ptr);
+}
+
+mfxStatus VPLDX11AccelerationPolicy::get_hdl_cb(mfxHDL pthis, mfxMemId mid, mfxHDL *handle) {
+    if (!pthis) {
+        return MFX_ERR_MEMORY_ALLOC;
+    }
+
+    VPLDX11AccelerationPolicy *self = static_cast<VPLDX11AccelerationPolicy *>(pthis);
+    return self->on_get_hdl(mid, handle);
+}
+
+mfxStatus VPLDX11AccelerationPolicy::free_cb(mfxHDL pthis, mfxFrameAllocResponse *response) {
+    if (!pthis) {
+        return MFX_ERR_MEMORY_ALLOC;
+    }
+
+    VPLDX11AccelerationPolicy *self = static_cast<VPLDX11AccelerationPolicy *>(pthis);
+    return self->on_free(response);
+}
+
+mfxStatus VPLDX11AccelerationPolicy::on_alloc(mfxFrameAllocRequest *request,
+                                              mfxFrameAllocResponse *response) {
+
+    GAPI_LOG_DEBUG(nullptr, __FUNCTION__);
+    return MFX_ERR_MEMORY_ALLOC;
+}
+
+mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
+    GAPI_LOG_DEBUG(nullptr, __FUNCTION__);
+    return MFX_ERR_MEMORY_ALLOC;
+}
+
+mfxStatus VPLDX11AccelerationPolicy::on_unlock(mfxMemId mid, mfxFrameData *ptr) {
+    GAPI_LOG_DEBUG(nullptr, __FUNCTION__);
+    return MFX_ERR_MEMORY_ALLOC;
+}
+
+mfxStatus VPLDX11AccelerationPolicy::on_get_hdl(mfxMemId mid, mfxHDL *handle) {
+    GAPI_LOG_DEBUG(nullptr, __FUNCTION__);
+    return MFX_ERR_MEMORY_ALLOC;
+}
+
+mfxStatus VPLDX11AccelerationPolicy::on_free(mfxFrameAllocResponse *response) {
+    GAPI_LOG_DEBUG(nullptr, __FUNCTION__);
+    return MFX_ERR_MEMORY_ALLOC;
 }
 } // namespace wip
 } // namespace gapi

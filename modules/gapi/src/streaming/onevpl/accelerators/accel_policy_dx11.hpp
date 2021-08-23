@@ -9,7 +9,7 @@
 
 #include "opencv2/gapi/own/exports.hpp" // GAPI_EXPORTS
 //TODO
-#define  CPU_ACCEL_ADAPTER
+//#define  CPU_ACCEL_ADAPTER
 
 #ifdef HAVE_ONEVPL
 #include <vpl/mfxvideo.h>
@@ -52,7 +52,21 @@ struct VPLDX11AccelerationPolicy final: public VPLAccelerationPolicy
 
 private:
     ID3D11Device *hw_handle;
+
     mfxFrameAllocator allocator;
+    static mfxStatus MFX_CDECL alloc_cb(mfxHDL pthis,
+                                        mfxFrameAllocRequest *request,
+                                        mfxFrameAllocResponse *response);
+    static mfxStatus MFX_CDECL lock_cb(mfxHDL pthis, mfxMemId mid, mfxFrameData *ptr);
+    static mfxStatus MFX_CDECL unlock_cb(mfxHDL pthis, mfxMemId mid, mfxFrameData *ptr);
+    static mfxStatus MFX_CDECL get_hdl_cb(mfxHDL pthis, mfxMemId mid, mfxHDL *handle);
+    static mfxStatus MFX_CDECL free_cb(mfxHDL pthis, mfxFrameAllocResponse *response);
+
+    virtual mfxStatus on_alloc(mfxFrameAllocRequest *request, mfxFrameAllocResponse *response);
+    virtual mfxStatus on_lock(mfxMemId mid, mfxFrameData *ptr);
+    virtual mfxStatus on_unlock(mfxMemId mid, mfxFrameData *ptr);
+    virtual mfxStatus on_get_hdl(mfxMemId mid, mfxHDL *handle);
+    virtual mfxStatus on_free(mfxFrameAllocResponse *response);
 
 #ifdef CPU_ACCEL_ADAPTER
     std::unique_ptr<VPLCPUAccelerationPolicy> adapter;

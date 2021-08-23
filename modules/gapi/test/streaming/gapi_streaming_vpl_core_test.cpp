@@ -36,6 +36,35 @@
 #include "streaming/onevpl/engine/processing_engine_base.hpp"
 #include "streaming/onevpl/engine/engine_session.hpp"
 
+
+mfxStatus MFX_CDECL fa_alloc(mfxHDL pthis, mfxFrameAllocRequest *request, mfxFrameAllocResponse *response) {
+   std::cerr << __FUNCTION__ << std::endl;
+   return MFX_ERR_NONE;
+}
+
+mfxStatus MFX_CDECL fa_lock(mfxHDL pthis, mfxMemId mid, mfxFrameData *ptr) {
+   std::cerr << __FUNCTION__ << std::endl;
+   return MFX_ERR_NONE;
+}
+
+mfxStatus MFX_CDECL fa_unlock(mfxHDL pthis, mfxMemId mid, mfxFrameData *ptr) {
+   std::cerr << __FUNCTION__ << std::endl;
+   return MFX_ERR_NONE;
+}
+
+mfxStatus MFX_CDECL fa_gethdl(mfxHDL pthis, mfxMemId mid, mfxHDL *handle) {
+   std::cerr << __FUNCTION__ << std::endl;
+   return MFX_ERR_NONE;
+}
+
+mfxStatus MFX_CDECL fa_free(mfxHDL pthis, mfxFrameAllocResponse *response) {
+   std::cerr << __FUNCTION__ << std::endl;
+   return MFX_ERR_NONE;
+}
+
+
+
+
 namespace opencv_test
 {
 namespace
@@ -448,11 +477,38 @@ TEST(OneVPL_Source_DX11_Accel, Init)
     VPLDX11AccelerationPolicy accel;
 
     mfxLoader mfx_handle = MFXLoad();
-    mfxSession mfx_session{};
+
+    mfxConfig cfg_inst_0 = MFXCreateConfig(mfx_handle);
+    EXPECT_TRUE(cfg_inst_0);
+    mfxVariant mfx_param_0;
+    mfx_param_0.Type = MFX_VARIANT_TYPE_U32;
+    mfx_param_0.Data.U32 = MFX_IMPL_TYPE_HARDWARE;
+    EXPECT_EQ(MFXSetConfigFilterProperty(cfg_inst_0,(mfxU8 *)"mfxImplDescription.Impl",
+                                                    mfx_param_0), MFX_ERR_NONE);
+
+    mfxConfig cfg_inst_1 = MFXCreateConfig(mfx_handle);
+    EXPECT_TRUE(cfg_inst_1);
+    mfxVariant mfx_param_1;
+    mfx_param_1.Type = MFX_VARIANT_TYPE_U32;
+    mfx_param_1.Data.U32 = MFX_ACCEL_MODE_VIA_D3D11;
+    EXPECT_EQ(MFXSetConfigFilterProperty(cfg_inst_1,(mfxU8 *)"mfxImplDescription.AccelerationMode",
+                                                    mfx_param_1), MFX_ERR_NONE);
+
+    mfxConfig cfg_inst_2 = MFXCreateConfig(mfx_handle);
+    EXPECT_TRUE(cfg_inst_2);
+    mfxVariant mfx_param_2;
+    mfx_param_2.Type = MFX_VARIANT_TYPE_U32;
+    mfx_param_2.Data.U32 = MFX_CODEC_HEVC;
+    EXPECT_EQ(MFXSetConfigFilterProperty(cfg_inst_2,(mfxU8 *)"mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
+                                                    mfx_param_2), MFX_ERR_NONE);
 
     // create session
+    mfxSession mfx_session{};
     mfxStatus sts = MFXCreateSession(mfx_handle, 0, &mfx_session);
     EXPECT_EQ(MFX_ERR_NONE, sts);
+
+    // assign acceleration
+    EXPECT_NO_THROW(accel.init(mfx_session));
 
     // create proper bitstream
     mfxBitstream bitstream{};
@@ -470,9 +526,31 @@ TEST(OneVPL_Source_DX11_Accel, Init)
     // prepare dec params
     mfxVideoParam mfxDecParams {};
     mfxDecParams.mfx.CodecId = bitstream.CodecId;
-    mfxDecParams.IOPattern = MFX_IOPATTERN_OUT_SYSTEM_MEMORY;//MFX_IOPATTERN_OUT_VIDEO_MEMORY;
+    mfxDecParams.IOPattern = MFX_IOPATTERN_OUT_VIDEO_MEMORY;
     sts = MFXVideoDECODE_DecodeHeader(mfx_session, &bitstream, &mfxDecParams);
     EXPECT_EQ(MFX_ERR_NONE, sts);
+
+    mfxFrameAllocRequest request{};
+    memset(&request, 0, sizeof(request));
+    sts = MFXVideoDECODE_QueryIOSurf(mfx_session, &mfxDecParams, &request);
+    EXPECT_EQ(MFX_ERR_NONE, sts);
+
+    mfxU16 numSurfaces = request.NumFrameSuggested;
+
+    // Allocate surfaces for decoder
+    /*
+    mfxFrameAllocResponse mfxResponse;
+    sts = mfxAllocator.Alloc(mfxAllocator.pthis, &Request, &mfxResponse);
+    MSDK_CHECK_RESULT(sts, MFX_ERR_NONE, sts);
+
+    // Allocate surface headers (mfxFrameSurface1) for decoder
+    std::vector<mfxFrameSurface1> pmfxSurfaces(numSurfaces);
+    for (int i = 0; i < numSurfaces; i++) {
+        memset(&pmfxSurfaces[i], 0, sizeof(mfxFrameSurface1));
+        pmfxSurfaces[i].Info = mfxDecParams.mfx.FrameInfo;
+        pmfxSurfaces[i].Data.MemId = mfxResponse.mids[i];      // MID (memory id) represents one video NV12 surface
+    }
+    */
 
     sts = MFXVideoDECODE_Init(mfx_session, &mfxDecParams);
     EXPECT_EQ(MFX_ERR_NONE, sts);
@@ -482,6 +560,7 @@ TEST(OneVPL_Source_DX11_Accel, Init)
     //mfxDecParams.mfx.FrameInfo.Height
     //mfxDecParams.mfx.FrameInfo.FourCC
 
+    EXPECT_NO_THROW(accel.deinit(mfx_session));
     MFXClose(mfx_session);
     MFXUnload(mfx_handle);
 }
