@@ -164,12 +164,22 @@ set(gapi_srcs
     src/backends/python/gpythonbackend.cpp
 
     # Streaming source
-    src/streaming/onevpl/onevpl_source.cpp
-    src/streaming/onevpl/onevpl_source_priv.cpp
+    src/streaming/onevpl/source.cpp
+    src/streaming/onevpl/source_priv.cpp
+    src/streaming/onevpl/file_data_provider.cpp
+    src/streaming/onevpl/cfg_params.cpp
+    src/streaming/onevpl/data_provider_interface_exception.cpp
 
     # Utils (ITT tracing)
     src/utils/itt.cpp
     )
+
+if(HAVE_GAPI_ONEVPL)
+    list(APPEND gapi_srcs
+        src/streaming/onevpl/accelerators/surface/cpu_frame_adapter.cpp
+        src/streaming/onevpl/accelerators/surface/surface.cpp
+    )
+endif()
 
 ocv_add_dispatched_file(backends/fluid/gfluidimgproc_func SSE4_1 AVX2)
 
