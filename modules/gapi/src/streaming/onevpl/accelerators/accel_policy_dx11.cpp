@@ -8,6 +8,7 @@
 #include "streaming/onevpl/accelerators/accel_policy_dx11.hpp"
 //#include "streaming/vpl/vpl_utils.hpp"
 #include "streaming/onevpl/accelerators/surface/cpu_frame_adapter.hpp"
+#include "streaming/onevpl/accelerators/surface/dx11_frame_adapter.hpp"
 #include "streaming/onevpl/accelerators/surface/surface.hpp"
 #include "streaming/onevpl/onevpl_utils.hpp"
 #include "logger.hpp"
@@ -49,6 +50,10 @@ VPLDX11AccelerationPolicy::VPLDX11AccelerationPolicy() :
 
 VPLDX11AccelerationPolicy::~VPLDX11AccelerationPolicy()
 {
+    for (auto& allocation_pair : allocation_table) {
+        allocation_pair.second.clear();
+    }
+
     if (hw_handle)
     {
         GAPI_LOG_INFO(nullptr, "VPLDX11AccelerationPolicy release ID3D11Device");
@@ -223,9 +228,81 @@ mfxStatus VPLDX11AccelerationPolicy::free_cb(mfxHDL pthis, mfxFrameAllocResponse
 
 mfxStatus VPLDX11AccelerationPolicy::on_alloc(mfxFrameAllocRequest *request,
                                               mfxFrameAllocResponse *response) {
+    GAPI_LOG_DEBUG(nullptr, "Requestend allocation id: " << std::to_string(request->AllocId) <<
+                            ", type: " << ext_mem_frame_type_to_cstr(request->Type) <<
+                            ", size: " << request->Info.Width << "x" << request->Info.Height <<
+                            ", frames sugested count: " << request->NumFrameSuggested);
+    auto table_it = allocation_table.find(request->AllocId);
+    if (allocation_table.end() != table_it) {
+        GAPI_LOG_WARNING(nullptr, "Allocation already exist, id: " + std::to_string(request->AllocId) +
+                                   ". Total allocation size: " + std::to_string(allocation_table.size()));
 
-    GAPI_LOG_DEBUG(nullptr, __FUNCTION__);
-    return MFX_ERR_MEMORY_ALLOC;
+        // TODO cache
+        return MFX_ERR_MEMORY_ALLOC;
+    }
+
+    DXGI_FORMAT colorFormat = VPLMediaFrameDX11Adapter::get_dx11_color_format(request->Info.FourCC);
+
+    if (DXGI_FORMAT_UNKNOWN == colorFormat || colorFormat != DXGI_FORMAT_NV12) {
+        GAPI_LOG_WARNING(nullptr, "Unsupported fourcc :" << request->Info.FourCC);
+        return MFX_ERR_UNSUPPORTED;
+    }
+
+    D3D11_TEXTURE2D_DESC desc = { 0 };
+
+    desc.Width = request->Info.Width;
+    desc.Height = request->Info.Height;
+
+    desc.MipLevels = 1;
+    // single texture with subresources
+    desc.ArraySize = request->NumFrameSuggested;
+    desc.Format = colorFormat;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+    desc.BindFlags = D3D11_BIND_DECODER;
+
+    if (request->Type & MFX_MEMTYPE_SHARED_RESOURCE) {
+        desc.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
+        desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+    }
+
+    ID3D11Texture2D *pTexture2D;
+    HRESULT err = hw_handle->CreateTexture2D(&desc, nullptr, &pTexture2D);
+    if (FAILED(err)) {
+        GAPI_LOG_WARNING(nullptr, "Cannot create texture, error: " + std::to_string(HRESULT_CODE(err)));
+        return MFX_ERR_MEMORY_ALLOC;
+    }
+
+    // for multiple subresources initialize allocation array
+    auto cand_resource_it = allocation_table.end();
+    {
+        allocation_t resources(request->NumFrameSuggested);
+        for(decltype(request->NumFrameSuggested) i = 0; i < request->NumFrameSuggested; i++ ) {
+            resources[i].texture_ptr = pTexture2D;
+            resources[i].subresource_id = i;
+        }
+
+        // insert into global table
+        auto inserted_it = allocation_table.emplace(request->AllocId, std::move(resources));
+        if (!inserted_it.second) {
+            GAPI_LOG_WARNING(nullptr, "Cannot assign allocation by id: " + std::to_string(request->AllocId) +
+                                    " - aldeady exist. Total allocation size: " + std::to_string(allocation_table.size()));
+            pTexture2D->Release();
+            return MFX_ERR_MEMORY_ALLOC;
+        }
+
+        cand_resource_it = inserted_it.first;
+    }
+
+    //fill out response
+    GAPI_DbgAssert(cand_resource_it != allocation_table.end() && "Invalid cand_resource_it");
+
+    allocation_t &resources_array = cand_resource_it->second;
+    response->NumFrameActual = request->NumFrameSuggested;
+    response->mids = reinterpret_cast<mfxMemId *>(&resources_array);
+
+    return MFX_ERR_NONE;
 }
 
 mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
@@ -244,7 +321,17 @@ mfxStatus VPLDX11AccelerationPolicy::on_get_hdl(mfxMemId mid, mfxHDL *handle) {
 }
 
 mfxStatus VPLDX11AccelerationPolicy::on_free(mfxFrameAllocResponse *response) {
-    GAPI_LOG_DEBUG(nullptr, __FUNCTION__);
+    GAPI_LOG_DEBUG(nullptr, "Allocations count before: " << allocation_table.size());
+
+    auto table_it = allocation_table.find(response->AllocId);
+    if (allocation_table.end() == table_it) {
+        GAPI_LOG_WARNING(nullptr, "Cannot find allocation id: " + std::to_string(response->AllocId) +
+                                   ". Total allocation size: " + std::to_string(allocation_table.size()));
+        return MFX_ERR_MEMORY_ALLOC;
+    }
+
+    table_it->second.begin()->texture_ptr->Release();
+    allocation_table.erase(table_it);
     return MFX_ERR_MEMORY_ALLOC;
 }
 } // namespace wip

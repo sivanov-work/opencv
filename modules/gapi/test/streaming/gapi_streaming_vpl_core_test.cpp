@@ -28,6 +28,8 @@
 #include <opencv2/gapi/streaming/format.hpp>
 
 #ifdef HAVE_ONEVPL
+#define private public
+#define protected public
 #include "streaming/onevpl/accelerators/surface/surface.hpp"
 #include "streaming/onevpl/accelerators/surface/cpu_frame_adapter.hpp"
 #include "streaming/onevpl/accelerators/accel_policy_cpu.hpp"
@@ -35,7 +37,8 @@
 #include <opencv2/gapi/streaming/onevpl/onevpl_data_provider_interface.hpp>
 #include "streaming/onevpl/engine/processing_engine_base.hpp"
 #include "streaming/onevpl/engine/engine_session.hpp"
-
+#undef protected
+#undef private
 
 mfxStatus MFX_CDECL fa_alloc(mfxHDL pthis, mfxFrameAllocRequest *request, mfxFrameAllocResponse *response) {
    std::cerr << __FUNCTION__ << std::endl;
@@ -535,26 +538,41 @@ TEST(OneVPL_Source_DX11_Accel, Init)
     sts = MFXVideoDECODE_QueryIOSurf(mfx_session, &mfxDecParams, &request);
     EXPECT_EQ(MFX_ERR_NONE, sts);
 
-    mfxU16 numSurfaces = request.NumFrameSuggested;
-
     // Allocate surfaces for decoder
-    /*
     mfxFrameAllocResponse mfxResponse;
-    sts = mfxAllocator.Alloc(mfxAllocator.pthis, &Request, &mfxResponse);
-    MSDK_CHECK_RESULT(sts, MFX_ERR_NONE, sts);
+    sts = accel.on_alloc(&request, &mfxResponse);
+    EXPECT_EQ(sts, MFX_ERR_NONE);
 
-    // Allocate surface headers (mfxFrameSurface1) for decoder
+    mfxU16 numSurfaces = request.NumFrameSuggested;
     std::vector<mfxFrameSurface1> pmfxSurfaces(numSurfaces);
     for (int i = 0; i < numSurfaces; i++) {
         memset(&pmfxSurfaces[i], 0, sizeof(mfxFrameSurface1));
         pmfxSurfaces[i].Info = mfxDecParams.mfx.FrameInfo;
-        pmfxSurfaces[i].Data.MemId = mfxResponse.mids[i];      // MID (memory id) represents one video NV12 surface
+        pmfxSurfaces[i].Data.MemId = mfxResponse.mids[i];
     }
-    */
 
     sts = MFXVideoDECODE_Init(mfx_session, &mfxDecParams);
     EXPECT_EQ(MFX_ERR_NONE, sts);
 
+
+    mfxU8 *p0 = bitstream.Data;
+    mfxU8 *p1 = bitstream.Data + bitstream.DataOffset;
+    EXPECT_FALSE(bitstream.DataOffset <= bitstream.MaxLength - 1);
+    EXPECT_FALSE(bitstream.DataLength + bitstream.DataOffset <= bitstream.MaxLength);
+
+    for (mfxU32 i = 0; i < bitstream.DataLength; i++) {
+        *(p0++) = *(p1++);
+    }
+    bitstream.DataOffset = 0;
+
+    mfxFrameSurface1 *out_surf = nullptr;
+    mfxSyncPoint sync = nullptr;
+    sts = MFXVideoDECODE_DecodeFrameAsync(mfx_session, &bitstream,
+                                                    &pmfxSurfaces[0],
+                                                    &out_surf,
+                                                    &sync);
+
+    EXPECT_EQ(MFX_ERR_NONE, sts);
     // set valid description
     //mfxDecParams.mfx.FrameInfo.Width
     //mfxDecParams.mfx.FrameInfo.Height
