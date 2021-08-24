@@ -25,7 +25,7 @@
 #include <opencv2/gapi/streaming/desync.hpp>
 #include <opencv2/gapi/streaming/format.hpp>
 
-#include <opencv2/gapi/streaming/onevpl/onevpl_source.hpp>
+#include <opencv2/gapi/streaming/onevpl/source.hpp>
 
 #ifdef HAVE_ONEVPL
 
@@ -284,13 +284,13 @@ void checkPullOverload(const cv::Mat& ref,
     EXPECT_EQ(0., cv::norm(ref, out_mat, cv::NORM_INF));
 }
 
-struct StreamDataProvider : public cv::gapi::wip::IDataProvider {
+struct StreamDataProvider : public cv::gapi::wip::onevpl::IDataProvider {
 
     StreamDataProvider(std::istream& in) : data_stream (in) {
         EXPECT_TRUE(in);
     }
 
-    size_t provide_data(size_t out_data_size, void* out_data_buf) override {
+    size_t fetch_data(size_t out_data_size, void* out_data_buf) override {
         data_stream.read(reinterpret_cast<char*>(out_data_buf), out_data_size);
         return data_stream.gcount();
     }
@@ -2254,24 +2254,24 @@ const unsigned char hevc_header[] = {
 };
 TEST(OneVPL_Source, Init)
 {
-    using cfg_param = cv::gapi::wip::oneVPL_cfg_param;
+    using CfgParam = cv::gapi::wip::onevpl::CfgParam;
 
-    std::vector<cfg_param> src_params;
-    src_params.push_back(cfg_param::create<uint32_t>("mfxImplDescription.Impl",
+    std::vector<CfgParam> src_params;
+    src_params.push_back(CfgParam::create<uint32_t>("mfxImplDescription.Impl",
                                                                                MFX_IMPL_TYPE_HARDWARE));
-    src_params.push_back(cfg_param::create<uint32_t>("mfxImplDescription.AccelerationMode",
+    src_params.push_back(CfgParam::create<uint32_t>("mfxImplDescription.AccelerationMode",
                                                                                MFX_ACCEL_MODE_VIA_D3D11, false));
-    src_params.push_back(cfg_param::create<uint32_t>("mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
+    src_params.push_back(CfgParam::create<uint32_t>("mfxImplDescription.mfxDecoderDescription.decoder.CodecID",
                                                                                MFX_CODEC_HEVC));
     std::stringstream stream(std::ios_base::in | std::ios_base::out | std::ios_base::binary);
     EXPECT_TRUE(stream.write(reinterpret_cast<char*>(const_cast<unsigned char *>(hevc_header)),
                              sizeof(hevc_header)));
-    std::shared_ptr<cv::gapi::wip::IDataProvider> stream_data_provider = std::make_shared<StreamDataProvider>(stream);
+    std::shared_ptr<cv::gapi::wip::onevpl::IDataProvider> stream_data_provider = std::make_shared<StreamDataProvider>(stream);
 
     cv::Ptr<cv::gapi::wip::IStreamSource> cap;
     bool cap_created = false;
     try {
-        cap = cv::gapi::wip::make_vpl_src(stream_data_provider, src_params);
+        cap = cv::gapi::wip::make_onevpl_src(stream_data_provider, src_params);
         cap_created = true;
     } catch (const std::exception&) {
     }

@@ -9,7 +9,7 @@
 #include <opencv2/gapi/cpu/gcpukernel.hpp>
 #include <opencv2/gapi/infer/ie.hpp>
 #include <opencv2/gapi/render.hpp>
-#include <opencv2/gapi/streaming/onevpl/onevpl_source.hpp>
+#include <opencv2/gapi/streaming/onevpl/source.hpp>
 #include <opencv2/highgui.hpp> // CommandLineParser
 
 const std::string about =
@@ -157,7 +157,7 @@ GAPI_OCV_KERNEL(OCVBBoxes, BBoxes) {
 } // namespace custom
 
 namespace cfg {
-typename cv::gapi::wip::oneVPL_cfg_param create_from_string(const std::string &line);
+typename cv::gapi::wip::onevpl::CfgParam create_from_string(const std::string &line);
 }
 
 int main(int argc, char *argv[]) {
@@ -185,7 +185,7 @@ int main(int argc, char *argv[]) {
 
     // get oneVPL cfg params from cmd
     std::stringstream params_list(cmd.get<std::string>("cfg_params"));
-    std::vector<cv::gapi::wip::oneVPL_cfg_param> source_cfgs;
+    std::vector<cv::gapi::wip::onevpl::CfgParam> source_cfgs;
     try {
         std::string line;
         while (std::getline(params_list, line, ';')) {
@@ -209,7 +209,7 @@ int main(int argc, char *argv[]) {
     // Create source
     cv::Ptr<cv::gapi::wip::IStreamSource> cap;
     try {
-        cap = cv::gapi::wip::make_vpl_src(file_path, source_cfgs);
+        cap = cv::gapi::wip::make_onevpl_src(file_path, source_cfgs);
         std::cout << "oneVPL source desription: " << cap->descr_of() << std::endl;
     } catch (const std::exception& ex) {
         std::cerr << "Cannot create source: " << ex.what() << std::endl;
@@ -247,17 +247,18 @@ int main(int argc, char *argv[]) {
     int framesCount = 0;
     cv::TickMeter t;
     cv::VideoWriter writer;
+    if (!output.empty() && !writer.isOpened()) {
+        const auto sz = cv::Size{frame_descr.size.width, frame_descr.size.height};
+        writer.open(output, cv::VideoWriter::fourcc('M','J','P','G'), 25.0, sz);
+        CV_Assert(writer.isOpened());
+    }
+
     cv::Mat outMat;
     t.start();
     while (pipeline.pull(cv::gout(outMat))) {
         cv::imshow("Out", outMat);
         cv::waitKey(1);
         if (!output.empty()) {
-            if (!writer.isOpened()) {
-                const auto sz = cv::Size{outMat.cols, outMat.rows};
-                writer.open(output, cv::VideoWriter::fourcc('M','J','P','G'), 25.0, sz);
-                CV_Assert(writer.isOpened());
-            }
             writer << outMat;
         }
         framesCount++;
@@ -272,16 +273,16 @@ int main(int argc, char *argv[]) {
 
 
 namespace cfg {
-typename cv::gapi::wip::oneVPL_cfg_param create_from_string(const std::string &line) {
+typename cv::gapi::wip::onevpl::CfgParam create_from_string(const std::string &line) {
     using namespace cv::gapi::wip;
 
     if (line.empty()) {
-        throw std::runtime_error("Cannot parse oneVPL_cfg_param from emply line");
+        throw std::runtime_error("Cannot parse CfgParam from emply line");
     }
 
     std::string::size_type name_endline_pos = line.find(':');
     if (name_endline_pos == std::string::npos) {
-        throw std::runtime_error("Cannot parse oneVPL_cfg_param from: " + line +
+        throw std::runtime_error("Cannot parse CfgParam from: " + line +
                                  "\nExpected separator \":\"");
     }
 
