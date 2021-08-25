@@ -15,6 +15,7 @@
 #ifdef HAVE_ONEVPL
 #include <vpl/mfxvideo.h>
 #include "streaming/onevpl/accelerators/accel_policy_interface.hpp"
+#include "streaming/onevpl/accelerators/surface/surface_pool.hpp"
 
 #ifdef CPU_ACCEL_ADAPTER
 #include "streaming/onevpl/accelerators/accel_policy_cpu.hpp"
@@ -35,15 +36,59 @@ namespace cv {
 namespace gapi {
 namespace wip {
 
+
+struct allocation_record;
+
+struct allocation_data_t {
+    using subresource_id_t = unsigned int;
+
+    allocation_data_t(std::weak_ptr<allocation_record> parent,
+                      ID3D11Texture2D* texture_ptr,
+                      subresource_id_t subresource_id);
+    ~allocation_data_t();
+
+    void release();
+private:
+    ID3D11Texture2D* texture_ptr = nullptr;
+    subresource_id_t subresource_id = 0;
+    std::weak_ptr<allocation_record> observer;
+};
+
+struct allocation_record : public std::enable_shared_from_this<allocation_record> {
+
+    using Ptr = std::shared_ptr<allocation_record>;
+
+    template<typename... Args>
+    static Ptr create(Args&& ...args) {
+        std::shared_ptr<allocation_record> record(new allocation_record);
+        record->init(std::forward<Args>(args)...);
+        return record;
+    }
+
+    Ptr get_ptr();
+    allocation_data_t* data();
+private:
+    allocation_record();
+    void init(unsigned int items, ID3D11Texture2D* texture);
+
+    std::vector<allocation_data_t> resources;
+};
+
+
+
+
 struct GAPI_EXPORTS VPLDX11AccelerationPolicy final: public VPLAccelerationPolicy
 {
     // GAPI_EXPORTS for tests
     VPLDX11AccelerationPolicy();
     ~VPLDX11AccelerationPolicy();
 
+    using pool_t = CachedPool;
+
     void init(session_t session) override;
     void deinit(session_t session) override;
     pool_key_t create_surface_pool(size_t pool_size, size_t surface_size_bytes, surface_ptr_ctr_t creator) override;
+    pool_key_t create_surface_pool(const mfxFrameAllocRequest& alloc_request, const mfxVideoParam& param) override;
     surface_weak_ptr_t get_free_surface(pool_key_t key) override;
     size_t get_free_surface_count(pool_key_t key) const override;
     size_t get_surface_count(pool_key_t key) const override;
@@ -63,27 +108,17 @@ private:
     static mfxStatus MFX_CDECL get_hdl_cb(mfxHDL pthis, mfxMemId mid, mfxHDL *handle);
     static mfxStatus MFX_CDECL free_cb(mfxHDL pthis, mfxFrameAllocResponse *response);
 
-    virtual mfxStatus on_alloc(mfxFrameAllocRequest *request, mfxFrameAllocResponse *response);
+    virtual mfxStatus on_alloc(const mfxFrameAllocRequest *request, mfxFrameAllocResponse *response);
     virtual mfxStatus on_lock(mfxMemId mid, mfxFrameData *ptr);
     virtual mfxStatus on_unlock(mfxMemId mid, mfxFrameData *ptr);
     virtual mfxStatus on_get_hdl(mfxMemId mid, mfxHDL *handle);
     virtual mfxStatus on_free(mfxFrameAllocResponse *response);
 
     using alloc_id_t = mfxU32;
-    using texture_subresource_id_t = unsigned int;
-    struct allocation_data_t {
-        ~allocation_data_t() {
-            release();
-        }
-        void release() {
-            if(texture_ptr) { texture_ptr->Release(); texture_ptr = nullptr; }
-        }
-        ID3D11Texture2D* texture_ptr = nullptr;
-        texture_subresource_id_t subresource_id = 0;
-    };
-
-    using allocation_t = std::vector<allocation_data_t>;
+    using allocation_t = std::shared_ptr<allocation_record>;
     std::map<alloc_id_t, allocation_t> allocation_table;
+
+    std::map<pool_key_t, pool_t> pool_table;
 
 #ifdef CPU_ACCEL_ADAPTER
     std::unique_ptr<VPLCPUAccelerationPolicy> adapter;
