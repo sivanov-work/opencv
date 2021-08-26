@@ -127,6 +127,10 @@ VPLCPUAccelerationPolicy::~VPLCPUAccelerationPolicy() {
     GAPI_LOG_INFO(nullptr, "destroyed");
 }
 
+VPLAccelerationPolicy::AccelType VPLCPUAccelerationPolicy::get_accel_type() const {
+    return AccelType::CPU;
+}
+
 void VPLCPUAccelerationPolicy::init(session_t session) {
     (void)session;
     //MFXVideoCORE_SetFrameAllocator(session, mfxFrameAllocator instance)
@@ -213,7 +217,7 @@ VPLCPUAccelerationPolicy::create_surface_pool(size_t pool_size, size_t surface_s
     return preallocated_pool_memory_ptr;
 }
 VPLCPUAccelerationPolicy::pool_key_t
-VPLCPUAccelerationPolicy::create_surface_pool(const mfxFrameAllocRequest& alloc_request, const mfxVideoParam& param) {
+VPLCPUAccelerationPolicy::create_surface_pool(const mfxFrameAllocRequest& alloc_request, mfxVideoParam& param) {
 
 // External (application) allocation of decode surfaces
     GAPI_LOG_DEBUG(nullptr, "Query mfxFrameAllocRequest.NumFrameSuggested: " << alloc_request.NumFrameSuggested <<

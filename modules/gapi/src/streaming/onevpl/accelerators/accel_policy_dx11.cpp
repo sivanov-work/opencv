@@ -49,10 +49,36 @@ allocation_data_t::~allocation_data_t() {
 }
 
 void allocation_data_t::release() {
-    if(texture_ptr) { texture_ptr->Release(); texture_ptr = nullptr; }
+    GAPI_LOG_DEBUG(nullptr, "texture: " << texture_ptr <<
+                             ", subresource id: " << subresource_id <<
+                             ", parent: " << observer.lock().get());
+    if(texture_ptr) {
+        texture_ptr->Release();
+        texture_ptr = nullptr;
+    }
+}
+
+ID3D11Texture2D* allocation_data_t::get_texture() {
+    return texture_ptr;
 }
 
 allocation_record::allocation_record() = default;
+allocation_record::~allocation_record() {
+    GAPI_LOG_DEBUG(nullptr, "record: " << this <<
+                            ", subresources count: " << resources.size());
+
+    ID3D11Texture2D* texture = nullptr;
+    if (!resources.empty()) {
+        texture = resources.begin()->get_texture();
+    }
+
+    resources.clear();
+
+    GAPI_LOG_DEBUG(nullptr, "release final reference texture: " << texture);
+    if(texture) {
+        texture->Release();
+    }
+}
 
 void allocation_record::init(unsigned int items, ID3D11Texture2D* texture) {
     GAPI_DbgAssert(items != 0 && "Cannot create allocation_record with empty items");
@@ -96,11 +122,16 @@ VPLDX11AccelerationPolicy::~VPLDX11AccelerationPolicy()
         allocation_pair.second.reset();
     }
 
+    GAPI_LOG_INFO(nullptr, "release device: " << hw_handle);
     if (hw_handle)
     {
         GAPI_LOG_INFO(nullptr, "VPLDX11AccelerationPolicy release ID3D11Device");
         hw_handle->Release();
     }
+}
+
+VPLAccelerationPolicy::AccelType VPLDX11AccelerationPolicy::get_accel_type() const {
+    return AccelType::GPU;
 }
 
 void VPLDX11AccelerationPolicy::init(session_t session) {
@@ -188,7 +219,9 @@ VPLDX11AccelerationPolicy::create_surface_pool(size_t pool_size, size_t surface_
 
 VPLDX11AccelerationPolicy::pool_key_t
 VPLDX11AccelerationPolicy::create_surface_pool(const mfxFrameAllocRequest& alloc_request,
-                                               const mfxVideoParam& param) {
+                                               mfxVideoParam& param) {
+
+    param.IOPattern = MFX_IOPATTERN_OUT_VIDEO_MEMORY;
 
     // allocate textures by explicit request
     mfxFrameAllocResponse mfxResponse;

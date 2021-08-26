@@ -35,6 +35,12 @@ struct VPLAccelerationPolicy
                                                           size_t out_buf_ptr_offset,
                                                           size_t out_buf_ptr_size)>;
 
+    enum class AccelType {
+        CPU,
+        GPU
+    };
+
+    virtual AccelType get_accel_type() const = 0;
     virtual void init(session_t session) = 0;
     virtual void deinit(session_t session) = 0;
 
@@ -43,7 +49,7 @@ struct VPLAccelerationPolicy
     // thus it is not implemented,
     // PLEASE provide initial memory area large enough
     virtual pool_key_t create_surface_pool(size_t pool_size, size_t surface_size_bytes, surface_ptr_ctr_t creator) = 0;
-    virtual pool_key_t create_surface_pool(const mfxFrameAllocRequest& alloc_request, const mfxVideoParam& param) = 0;
+    virtual pool_key_t create_surface_pool(const mfxFrameAllocRequest& alloc_request, mfxVideoParam& param) = 0;
 
     virtual surface_weak_ptr_t get_free_surface(pool_key_t key) = 0;
     virtual size_t get_free_surface_count(pool_key_t key) const = 0;

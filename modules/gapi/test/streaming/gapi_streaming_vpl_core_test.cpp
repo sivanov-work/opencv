@@ -55,6 +55,11 @@ struct TestProcessingSession : public cv::gapi::wip::EngineSession {
     TestProcessingSession(mfxSession mfx_session) :
         EngineSession(mfx_session, {}) {
     }
+
+    const mfxVideoParam& get_video_param() const override {
+        static mfxVideoParam empty;
+        return empty;
+    }
 };
 
 struct TestProcessingEngine: public cv::gapi::wip::ProcessingEngineBase {
@@ -93,11 +98,12 @@ struct TestProcessingEngine: public cv::gapi::wip::ProcessingEngineBase {
         );
     }
 
-    void initialize_session(mfxSession mfx_session,
-                            cv::gapi::wip::DecoderParams&&,
-                            std::shared_ptr<cv::gapi::wip::IDataProvider>) override {
+    std::shared_ptr<cv::gapi::wip::EngineSession>
+            initialize_session(mfxSession mfx_session,
+                               const std::vector<cv::gapi::wip::oneVPL_cfg_param>&,
+                               std::shared_ptr<cv::gapi::wip::IDataProvider>) override {
 
-        register_session<TestProcessingSession>(mfx_session);
+        return register_session<TestProcessingSession>(mfx_session);
     }
 };
 
@@ -418,7 +424,7 @@ TEST(OneVPL_Source_ProcessingEngine, Init)
     TestProcessingEngine engine(std::move(accel));
 
     mfxSession mfx_session{};
-    engine.initialize_session(mfx_session, DecoderParams{}, std::shared_ptr<IDataProvider>{});
+    engine.initialize_session(mfx_session, {}, std::shared_ptr<IDataProvider>{});
 
     EXPECT_EQ(engine.get_ready_frames_count(), 0);
     ProcessingEngineBase::ExecutionStatus ret = engine.process(mfx_session);
@@ -514,29 +520,8 @@ TEST(OneVPL_Source_DX11_Accel, Init)
     sts = MFXVideoDECODE_Init(mfx_session, &mfxDecParams);
     EXPECT_EQ(MFX_ERR_NONE, sts);
 
-
-    mfxU8 *p0 = bitstream.Data;
-    mfxU8 *p1 = bitstream.Data + bitstream.DataOffset;
-    EXPECT_TRUE(bitstream.DataOffset <= bitstream.MaxLength - 1);
-    EXPECT_TRUE(bitstream.DataLength + bitstream.DataOffset <= bitstream.MaxLength);
-
-    for (mfxU32 i = 0; i < bitstream.DataLength; i++) {
-        *(p0++) = *(p1++);
-    }
-    bitstream.DataOffset = 0;
-
-    mfxFrameSurface1 *out_surf = nullptr;
-    mfxSyncPoint sync = nullptr;
-    sts = MFXVideoDECODE_DecodeFrameAsync(mfx_session, &bitstream,
-                                          cand_surface->get_handle(),
-                                          &out_surf,
-                                          &sync);
-
+    MFXVideoDECODE_Close(mfx_session);
     EXPECT_EQ(MFX_ERR_NONE, sts);
-    // set valid description
-    //mfxDecParams.mfx.FrameInfo.Width
-    //mfxDecParams.mfx.FrameInfo.Height
-    //mfxDecParams.mfx.FrameInfo.FourCC
 
     EXPECT_NO_THROW(accel.deinit(mfx_session));
     MFXClose(mfx_session);

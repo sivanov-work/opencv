@@ -12,7 +12,7 @@
 #include "streaming/onevpl/accelerators/accel_policy_interface.hpp"
 #include "streaming/onevpl/accelerators/surface/surface.hpp"
 #include "streaming/onevpl/onevpl_utils.hpp"
-//TODO #include "streaming/vpl/vpl_utils.hpp"
+#include "streaming/onevpl/onevpl_cfg_params_parser.hpp"
 #include "logger.hpp"
 
 
@@ -108,13 +108,63 @@ VPLLegacyDecodeEngineAsync::VPLLegacyDecodeEngineAsync(std::unique_ptr<VPLAccele
     );
 }
 
-void VPLLegacyDecodeEngineAsync::initialize_session(mfxSession mfx_session,
-                                         DecoderParams&& decoder_param,
-                                         std::shared_ptr<IDataProvider> provider)
+std::shared_ptr<EngineSession>
+VPLLegacyDecodeEngineAsync::initialize_session(mfxSession mfx_session,
+                                               const std::vector<oneVPL_cfg_param>& cfg_params,
+                                               std::shared_ptr<IDataProvider> provider)
 {
-    mfxFrameAllocRequest decRequest = {};
+    GAPI_DbgAssert(provider && "Cannot create decoder, data provider is nullptr");
+
+    // Find codec ID from config
+    auto dec_it = std::find_if(cfg_params.begin(), cfg_params.end(), [] (const oneVPL_cfg_param& value) {
+        return value.get_name() == "mfxImplDescription.mfxDecoderDescription.decoder.CodecID";
+    });
+    if (dec_it == cfg_params.end()) {
+        throw std::logic_error("Cannot determine DecoderID from oneVPL config. Abort");
+    }
+
+    mfxVariant decoder = cfg_param_to_mfx_variant(*dec_it);
+
+    // fill input bitstream
+    mfxBitstream bitstream{};
+    const int BITSTREAM_BUFFER_SIZE = 2000000;
+    bitstream.MaxLength = BITSTREAM_BUFFER_SIZE;
+    bitstream.Data = (mfxU8 *)calloc(bitstream.MaxLength, sizeof(mfxU8));
+    if(!bitstream.Data) {
+        throw std::runtime_error("Cannot allocate bitstream.Data bytes: " +
+                                 std::to_string(bitstream.MaxLength * sizeof(mfxU8)));
+    }
+
+    bitstream.CodecId = decoder.Data.U32;
+    mfxStatus sts = ReadEncodedStream(bitstream, provider);
+    if(MFX_ERR_NONE != sts) {
+        throw std::runtime_error("Error reading bitstream, error: " +
+                                 mfxstatus_to_string(sts));
+    }
+
+    // init session
+    acceleration_policy->init(mfx_session);
+
+    // Retrieve the frame information from input stream
+    mfxVideoParam mfxDecParams {};
+    mfxDecParams.mfx.CodecId = decoder.Data.U32;
+    VPLAccelerationPolicy::AccelType accel_type = acceleration_policy->get_accel_type();
+    if (accel_type == VPLAccelerationPolicy::AccelType::GPU) {
+        mfxDecParams.IOPattern = MFX_IOPATTERN_OUT_VIDEO_MEMORY;
+    } else {
+         mfxDecParams.IOPattern = MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
+    }
+
+    sts = MFXVideoDECODE_DecodeHeader(mfx_session, &bitstream, &mfxDecParams);
+    if(MFX_ERR_NONE != sts) {
+        throw std::runtime_error("Error decoding header, error: " +
+                                 mfxstatus_to_string(sts));
+    }
+
+    mfxFrameAllocRequest decRequest {};
+
     // Query number required surfaces for decoder
-    MFXVideoDECODE_QueryIOSurf(mfx_session, &decoder_param.param, &decRequest);
+    MFXVideoDECODE_QueryIOSurf(mfx_session, &mfxDecParams, &decRequest);
 
     // External (application) allocation of decode surfaces
     GAPI_LOG_DEBUG(nullptr, "Query IOSurf for session: " << mfx_session <<
@@ -122,8 +172,17 @@ void VPLLegacyDecodeEngineAsync::initialize_session(mfxSession mfx_session,
                             ", mfxFrameAllocRequest.Type: " << decRequest.Type);
 
     VPLAccelerationPolicy::pool_key_t decode_pool_key =
-                acceleration_policy->create_surface_pool(decRequest, decoder_param.param);
+                acceleration_policy->create_surface_pool(decRequest, mfxDecParams);
 
+    // Input parameters finished, now initialize decode
+    // create decoder for session accoring to header recovered from source file
+    sts = MFXVideoDECODE_Init(mfx_session, &mfxDecParams);
+    if (MFX_ERR_NONE != sts) {
+        throw std::runtime_error("Error initializing Decode, error: " +
+                                 mfxstatus_to_string(sts));
+    }
+
+    DecoderParams decoder_param {bitstream, mfxDecParams};
 
     // create session
     std::shared_ptr<LegacyDecodeSessionAsync> sess_ptr =
@@ -134,6 +193,7 @@ void VPLLegacyDecodeEngineAsync::initialize_session(mfxSession mfx_session,
     sess_ptr->init_surface_pool(decode_pool_key);
     // prepare working decode surface
     sess_ptr->swap_surface(*this);
+    return sess_ptr;
 }
 
 ProcessingEngineBase::ExecutionStatus VPLLegacyDecodeEngineAsync::execute_op(operation_t& op, EngineSession& sess) {

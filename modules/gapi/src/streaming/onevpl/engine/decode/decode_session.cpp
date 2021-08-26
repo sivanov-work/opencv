@@ -69,6 +69,10 @@ Data::Meta LegacyDecodeSessionAsync::generate_frame_meta() {
                     };
     return meta;
 }
+
+const mfxVideoParam& LegacyDecodeSessionAsync::get_video_param() const {
+    return mfx_decoder_param;
+}
 } // namespace wip
 } // namespace gapi
 } // namespace cv
