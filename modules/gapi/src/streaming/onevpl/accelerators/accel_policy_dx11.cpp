@@ -32,15 +32,22 @@ namespace wip {
 
 allocation_data_t::allocation_data_t(std::weak_ptr<allocation_record> parent,
                                      ID3D11Texture2D* tex_ptr,
-                                     subresource_id_t subtex_id) :
+                                     subresource_id_t subtex_id,
+                                     ID3D11Texture2D* staging_tex_ptr) :
     texture_ptr(tex_ptr),
     subresource_id(subtex_id),
+    staging_texture_ptr(staging_tex_ptr),
     observer(parent) {
 
     GAPI_DbgAssert(texture_ptr && "Cannot create allocation_data_t for empty texture");
+    GAPI_DbgAssert(staging_tex_ptr && "Cannot create allocation_data_t for empty staging texture");
     GAPI_DbgAssert(observer.lock() && "Cannot create allocation_data_t for empty parent");
 
+    // increase reference counter, cause allocation_data_t shares ownership
     texture_ptr->AddRef();
+
+    // no need to increase reference to staging_tex_ptr, because
+    // allocation_data_t owns it in exclusove way and receive ownership
 }
 
 allocation_data_t::~allocation_data_t() {
@@ -50,11 +57,16 @@ allocation_data_t::~allocation_data_t() {
 
 void allocation_data_t::release() {
     GAPI_LOG_DEBUG(nullptr, "texture: " << texture_ptr <<
-                             ", subresource id: " << subresource_id <<
-                             ", parent: " << observer.lock().get());
+                            ", subresource id: " << subresource_id <<
+                            ", parent: " << observer.lock().get());
     if(texture_ptr) {
         texture_ptr->Release();
         texture_ptr = nullptr;
+    }
+
+    if(staging_texture_ptr) {
+        staging_texture_ptr->Release();
+        staging_texture_ptr = nullptr;
     }
 }
 
@@ -62,31 +74,40 @@ ID3D11Texture2D* allocation_data_t::get_texture() {
     return texture_ptr;
 }
 
+ID3D11Texture2D* allocation_data_t::get_staging_texture() {
+    return staging_texture_ptr;
+}
+
+allocation_data_t::subresource_id_t allocation_data_t::get_subresource() const {
+    return subresource_id;
+}
+
 allocation_record::allocation_record() = default;
 allocation_record::~allocation_record() {
     GAPI_LOG_DEBUG(nullptr, "record: " << this <<
                             ", subresources count: " << resources.size());
 
-    ID3D11Texture2D* texture = nullptr;
-    if (!resources.empty()) {
-        texture = resources.begin()->get_texture();
+    for (AllocationId id : resources) {
+        delete id;
     }
-
     resources.clear();
 
-    GAPI_LOG_DEBUG(nullptr, "release final reference texture: " << texture);
-    if(texture) {
-        texture->Release();
+    GAPI_LOG_DEBUG(nullptr, "release final referenced texture: " << texture_ptr);
+    if(texture_ptr) {
+        texture_ptr->Release();
     }
 }
 
-void allocation_record::init(unsigned int items, ID3D11Texture2D* texture) {
+void allocation_record::init(unsigned int items, ID3D11Texture2D* texture,
+                             std::vector<ID3D11Texture2D*> &&staging_textures) {
     GAPI_DbgAssert(items != 0 && "Cannot create allocation_record with empty items");
+    GAPI_DbgAssert(items == staging_textures.size() && "Allocation items count and staging size are not equal");
 
     GAPI_LOG_DEBUG(nullptr, "subresources count: " << items << ", text: " << texture)
     resources.reserve(items);
+    texture_ptr = texture; // no AddRef here, because allocation_record receive ownership it here
     for(unsigned int i = 0; i < items; i++ ) {
-        resources.emplace_back(get_ptr(), texture, i);
+        resources.emplace_back(new allocation_data_t(get_ptr(), texture, i, staging_textures[i]));
     }
 }
 
@@ -94,12 +115,13 @@ allocation_record::Ptr allocation_record::get_ptr() {
     return shared_from_this();
 }
 
-allocation_data_t* allocation_record::data() {
+allocation_record::AllocationId* allocation_record::data() {
     return resources.data();
 }
 
 VPLDX11AccelerationPolicy::VPLDX11AccelerationPolicy() :
     hw_handle(),
+    device_context(),
     allocator()
 {
     // setup dx11 allocator
@@ -122,10 +144,14 @@ VPLDX11AccelerationPolicy::~VPLDX11AccelerationPolicy()
         allocation_pair.second.reset();
     }
 
-    GAPI_LOG_INFO(nullptr, "release device: " << hw_handle);
+    if (device_context) {
+        GAPI_LOG_INFO(nullptr, "release context: " << device_context);
+        device_context->Release();
+    }
+
     if (hw_handle)
     {
-        GAPI_LOG_INFO(nullptr, "VPLDX11AccelerationPolicy release ID3D11Device");
+        GAPI_LOG_INFO(nullptr, "release ID3D11Device");
         hw_handle->Release();
     }
 }
@@ -136,12 +162,12 @@ VPLAccelerationPolicy::AccelType VPLDX11AccelerationPolicy::get_accel_type() con
 
 void VPLDX11AccelerationPolicy::init(session_t session) {
     //Create device
-    UINT creationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+    UINT creationFlags = 0;//D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 
-#if defined(_DEBUG)
+//#if defined(_DEBUG)
     // If the project is in a debug build, enable debugging via SDK Layers with this flag.
     creationFlags |= D3D11_CREATE_DEVICE_DEBUG;
-#endif
+//#endif
 
     // This array defines the set of DirectX hardware feature levels this app will support.
     // Note the ordering should be preserved.
@@ -153,12 +179,10 @@ void VPLDX11AccelerationPolicy::init(session_t session) {
         D3D_FEATURE_LEVEL_11_0,
         D3D_FEATURE_LEVEL_10_1,
         D3D_FEATURE_LEVEL_10_0,
-        D3D_FEATURE_LEVEL_9_3
     };
     D3D_FEATURE_LEVEL featureLevel;
 
     // Create the Direct3D 11 API device object and a corresponding context.
-    ID3D11DeviceContext* context;
     HRESULT err =
         D3D11CreateDevice(
             nullptr, // Specify nullptr to use the default adapter.
@@ -170,7 +194,7 @@ void VPLDX11AccelerationPolicy::init(session_t session) {
             D3D11_SDK_VERSION, // Always set this to D3D11_SDK_VERSION.
             &hw_handle, // Returns the Direct3D device created.
             &featureLevel, // Returns feature level of device created.
-            &context // Returns the device immediate context.
+            &device_context // Returns the device immediate context.
             );
     if(FAILED(err))
     {
@@ -178,9 +202,12 @@ void VPLDX11AccelerationPolicy::init(session_t session) {
     }
 
     // oneVPL recommendation
-    ID3D11Multithread       *pD11Multithread;
-    context->QueryInterface(IID_PPV_ARGS(&pD11Multithread));
-    pD11Multithread->SetMultithreadProtected(true);
+    {
+        ID3D11Multithread       *pD11Multithread;
+        device_context->QueryInterface(IID_PPV_ARGS(&pD11Multithread));
+        pD11Multithread->SetMultithreadProtected(true);
+        pD11Multithread->Release();
+    }
 
     mfxStatus sts = MFXVideoCORE_SetHandle(session, MFX_HANDLE_D3D11_DEVICE, (mfxHDL) hw_handle);
     if (sts != MFX_ERR_NONE)
@@ -225,6 +252,9 @@ VPLDX11AccelerationPolicy::create_surface_pool(const mfxFrameAllocRequest& alloc
 
     // allocate textures by explicit request
     mfxFrameAllocResponse mfxResponse;
+    //TODO
+    //mfxFrameAllocRequest alloc_request = alloc_req;
+    //alloc_request.NumFrameSuggested = alloc_request.NumFrameSuggested * 5;
     mfxStatus sts = on_alloc(&alloc_request, &mfxResponse);
     if (sts != MFX_ERR_NONE)
     {
@@ -305,9 +335,18 @@ cv::MediaFrame::AdapterPtr VPLDX11AccelerationPolicy::create_frame_adapter(pool_
 #ifdef CPU_ACCEL_ADAPTER
     return adapter->create_frame_adapter(key, surface);
 #endif
-    (void)key;
-    (void)surface;
-    throw std::runtime_error("VPLDX11AccelerationPolicy::create_frame_adapter() is not implemented");
+    auto pool_it = pool_table.find(key);
+    if (pool_it == pool_table.end()) {
+        std::stringstream ss;
+        ss << "key is not found: " << key << ", table size: " << pool_table.size();
+        const std::string& str = ss.str();
+        GAPI_LOG_WARNING(nullptr, str);
+        throw std::runtime_error(std::string(__FUNCTION__) + " - " + str);
+    }
+
+    pool_t& requested_pool = pool_it->second;
+    return cv::MediaFrame::AdapterPtr{new VPLMediaFrameDX11Adapter(requested_pool.find_by_handle(surface),
+                                                                   allocator)};
 }
 
 mfxStatus VPLDX11AccelerationPolicy::alloc_cb(mfxHDL pthis, mfxFrameAllocRequest *request,
@@ -409,13 +448,32 @@ mfxStatus VPLDX11AccelerationPolicy::on_alloc(const mfxFrameAllocRequest *reques
         return MFX_ERR_MEMORY_ALLOC;
     }
 
+    // create  staging texture to read it from
+    desc.ArraySize      = 1;
+    desc.Usage          = D3D11_USAGE_STAGING;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    desc.BindFlags      = 0;
+    desc.MiscFlags      = 0;
+    std::vector<ID3D11Texture2D*> staging_textures;
+    staging_textures.reserve(request->NumFrameSuggested);
+    for (int i = 0; i < request->NumFrameSuggested; i ++ ) {
+        ID3D11Texture2D *staging_texture_2d = nullptr;
+        err = hw_handle->CreateTexture2D(&desc, NULL, &staging_texture_2d);
+        if (FAILED(err)) {
+            GAPI_LOG_WARNING(nullptr, "Cannot create staging texture, error: " + std::to_string(HRESULT_CODE(err)));
+            return MFX_ERR_MEMORY_ALLOC;
+        }
+        staging_textures.push_back(staging_texture_2d);
+    }
+
     // for multiple subresources initialize allocation array
     auto cand_resource_it = allocation_table.end();
     {
         // insert into global table
         auto inserted_it = allocation_table.emplace(request->AllocId,
                                                     allocation_record::create(request->NumFrameSuggested,
-                                                                              pTexture2D));
+                                                                              pTexture2D,
+                                                                              std::move(staging_textures)));
         if (!inserted_it.second) {
             GAPI_LOG_WARNING(nullptr, "Cannot assign allocation by id: " + std::to_string(request->AllocId) +
                                     " - aldeady exist. Total allocation size: " + std::to_string(allocation_table.size()));
@@ -440,18 +498,87 @@ mfxStatus VPLDX11AccelerationPolicy::on_alloc(const mfxFrameAllocRequest *reques
 }
 
 mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
-    GAPI_LOG_DEBUG(nullptr, __FUNCTION__);
-    return MFX_ERR_MEMORY_ALLOC;
+    allocation_record::AllocationId data = reinterpret_cast<allocation_record::AllocationId>(mid);
+    if (!data) {
+        GAPI_LOG_WARNING(nullptr, "Allocation record is empty");
+        return MFX_ERR_LOCK_MEMORY;
+    }
+
+    GAPI_LOG_DEBUG(nullptr, "texture : " << data->get_texture() << ", sub id: " << data->get_subresource());
+
+    // TODO - pass desired access in `mid` ext field?
+    D3D11_MAP mapType = D3D11_MAP_READ;
+    UINT mapFlags = D3D11_MAP_FLAG_DO_NOT_WAIT;
+
+    device_context->CopySubresourceRegion(data->get_staging_texture(), 0,
+                                          0, 0, 0,
+                                          data->get_texture(), data->get_subresource(),
+                                          nullptr);
+    HRESULT err = S_OK;
+    D3D11_MAPPED_SUBRESOURCE lockedRect {};
+    do {
+        err = device_context->Map(data->get_staging_texture(), 0, mapType, mapFlags, &lockedRect);
+        if (S_OK != err && DXGI_ERROR_WAS_STILL_DRAWING != err) {
+            GAPI_LOG_WARNING(nullptr, "Cannot Map staging texture in device context, error: " << std::to_string(HRESULT_CODE(err)));
+            return MFX_ERR_LOCK_MEMORY;
+        }
+    } while (DXGI_ERROR_WAS_STILL_DRAWING == err);
+
+    if (FAILED(err)) {
+        GAPI_LOG_WARNING(nullptr, "Cannot lock frame");
+        return MFX_ERR_LOCK_MEMORY;
+    }
+
+    D3D11_TEXTURE2D_DESC desc {};
+    data->get_texture()->GetDesc(&desc);
+    switch (desc.Format) {
+        case DXGI_FORMAT_NV12:
+            ptr->Pitch = (mfxU16)lockedRect.RowPitch;
+            ptr->Y     = (mfxU8 *)lockedRect.pData;
+            ptr->U     = (mfxU8 *)lockedRect.pData + desc.Height * lockedRect.RowPitch;
+            ptr->V     = ptr->U + 1;
+            break;
+        default:
+            GAPI_LOG_WARNING(nullptr, "Unknown DXGI format: " << desc.Format);
+            return MFX_ERR_LOCK_MEMORY;
+    }
+
+    return MFX_ERR_NONE;
 }
 
 mfxStatus VPLDX11AccelerationPolicy::on_unlock(mfxMemId mid, mfxFrameData *ptr) {
-    GAPI_LOG_DEBUG(nullptr, __FUNCTION__);
-    return MFX_ERR_MEMORY_ALLOC;
+
+    allocation_record::AllocationId data = reinterpret_cast<allocation_record::AllocationId>(mid);
+    if (!data) {
+        return MFX_ERR_LOCK_MEMORY;
+    }
+
+    //TODO no write!!!
+    GAPI_LOG_DEBUG(nullptr, "texture : " << data->get_texture() << ", sub id: " << data->get_subresource());
+    device_context->Unmap(data->get_staging_texture(), 0);
+
+    if (ptr) {
+        ptr->Pitch = 0;
+        ptr->U = ptr->V = ptr->Y = 0;
+        ptr->A = ptr->R = ptr->G = ptr->B = 0;
+    }
+
+    return MFX_ERR_NONE;
 }
 
 mfxStatus VPLDX11AccelerationPolicy::on_get_hdl(mfxMemId mid, mfxHDL *handle) {
-    GAPI_LOG_DEBUG(nullptr, __FUNCTION__);
-    return MFX_ERR_MEMORY_ALLOC;
+    allocation_record::AllocationId data = reinterpret_cast<allocation_record::AllocationId>(mid);
+    if (!data) {
+        return MFX_ERR_INVALID_HANDLE;
+    }
+
+    mfxHDLPair *pPair = reinterpret_cast<mfxHDLPair *>(handle);
+
+    pPair->first  = data->get_texture();
+    pPair->second = (mfxHDL)reinterpret_cast<allocation_data_t::subresource_id_t *>(data->get_subresource());
+
+    GAPI_LOG_DEBUG(nullptr, "texture : " << pPair->first << ", sub id: " << pPair->second);
+    return MFX_ERR_NONE;
 }
 
 mfxStatus VPLDX11AccelerationPolicy::on_free(mfxFrameAllocResponse *response) {

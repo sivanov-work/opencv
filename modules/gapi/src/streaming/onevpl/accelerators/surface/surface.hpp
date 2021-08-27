@@ -25,12 +25,8 @@ namespace gapi {
 namespace wip {
 
 class Surface {
-    using handle_t = mfxFrameSurface1;
-
-    std::shared_ptr<void> workspace_memory_ptr;
-    std::unique_ptr<handle_t> mfx_surface;
-    std::atomic<size_t> mirrored_locked_count;
 public:
+    using handle_t = mfxFrameSurface1;
     using info_t = mfxFrameInfo;
     using data_t = mfxFrameData;
 
@@ -42,6 +38,7 @@ public:
     GAPI_EXPORTS handle_t* get_handle() const;
     GAPI_EXPORTS const info_t& get_info() const;
     GAPI_EXPORTS const data_t& get_data() const;
+    GAPI_EXPORTS data_t& get_data();
 
     GAPI_EXPORTS size_t get_locks_count() const;
 
@@ -50,6 +47,11 @@ public:
     GAPI_EXPORTS size_t release_lock();
 private:
     Surface(std::unique_ptr<handle_t>&& surf, std::shared_ptr<void> accociated_memory);
+
+    std::shared_ptr<void> workspace_memory_ptr;
+    std::unique_ptr<handle_t> mfx_surface;
+    std::atomic<size_t> mirrored_locked_count;
+
 };
 
 using surface_ptr_t = std::shared_ptr<Surface>;

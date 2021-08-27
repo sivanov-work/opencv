@@ -20,8 +20,10 @@ namespace cv {
 namespace gapi {
 namespace wip {
 
-VPLMediaFrameDX11Adapter::VPLMediaFrameDX11Adapter(std::shared_ptr<Surface> surface):
-    parent_surface_ptr(surface) {
+VPLMediaFrameDX11Adapter::VPLMediaFrameDX11Adapter(std::shared_ptr<Surface> surface,
+                                                   mfxFrameAllocator alloc):
+    parent_surface_ptr(surface),
+    allocator(alloc) {
 
     GAPI_Assert(parent_surface_ptr && "Surface is nullptr");
     parent_surface_ptr->obtain_lock();
@@ -64,7 +66,74 @@ cv::GFrameDesc VPLMediaFrameDX11Adapter::meta() const {
 
 MediaFrame::View VPLMediaFrameDX11Adapter::access(MediaFrame::Access) {
 
-GAPI_Assert("VPLMediaFrameDX11Adapter::access() is not implemented");
+    Surface::data_t& data = parent_surface_ptr->get_data();
+    const Surface::info_t& info = parent_surface_ptr->get_info();
+
+    GAPI_LOG_DEBUG(nullptr, "START lock frame in surface: " << parent_surface_ptr->get_handle());
+    mfxStatus sts = allocator.Lock(allocator.pthis, data.MemId, &data);
+    if (sts != MFX_ERR_NONE) {
+        throw std::runtime_error("Cannot lock frame");
+    }
+    GAPI_LOG_DEBUG(nullptr, "FINISH lock frame in surface: " << parent_surface_ptr->get_handle());
+    using stride_t = typename cv::MediaFrame::View::Strides::value_type;
+    GAPI_Assert(data.Pitch >= 0 && "Pitch is less than 0");
+
+    stride_t pitch = static_cast<stride_t>(data.Pitch);
+
+
+    //TODO
+    auto parent_surface_ptr_copy = parent_surface_ptr;
+    mfxFrameAllocator allocator_copy = allocator;
+    switch(info.FourCC) {
+        case MFX_FOURCC_I420:
+        {
+            cv::MediaFrame::View::Ptrs pp = {
+                data.Y,
+                data.U,
+                data.V,
+                nullptr
+                };
+            cv::MediaFrame::View::Strides ss = {
+                    pitch,
+                    pitch / 2,
+                    pitch / 2, 0u
+                };
+            return cv::MediaFrame::View(std::move(pp), std::move(ss), [allocator_copy, parent_surface_ptr_copy] () {
+                parent_surface_ptr_copy->obtain_lock();
+
+                auto& data = parent_surface_ptr_copy->get_data();
+                GAPI_LOG_DEBUG(nullptr, "START unlock frame in surface: " << parent_surface_ptr_copy->get_handle());
+                allocator_copy.Unlock(allocator_copy.pthis, data.MemId, &data);
+                GAPI_LOG_DEBUG(nullptr, "FINISH unlock frame in surface: " << parent_surface_ptr_copy->get_handle());
+
+                parent_surface_ptr_copy->release_lock();
+            });
+        }
+        case MFX_FOURCC_NV12:
+        {
+            cv::MediaFrame::View::Ptrs pp = {
+                data.Y,
+                data.UV, nullptr, nullptr
+                };
+            cv::MediaFrame::View::Strides ss = {
+                    pitch,
+                    pitch, 0u, 0u
+                };
+            return cv::MediaFrame::View(std::move(pp), std::move(ss), [allocator_copy, parent_surface_ptr_copy] () {
+                parent_surface_ptr_copy->obtain_lock();
+
+                auto& data = parent_surface_ptr_copy->get_data();
+                GAPI_LOG_DEBUG(nullptr, "START unlock frame in surface: " << parent_surface_ptr_copy->get_handle());
+                allocator_copy.Unlock(allocator_copy.pthis, data.MemId, &data);
+                GAPI_LOG_DEBUG(nullptr, "FINISH unlock frame in surface: " << parent_surface_ptr_copy->get_handle());
+
+                parent_surface_ptr_copy->release_lock();
+            });
+        }
+            break;
+        default:
+            throw std::runtime_error("MediaFrame unknown 'fmt' type: " + std::to_string(info.FourCC));
+    }
 }
 
 cv::util::any VPLMediaFrameDX11Adapter::blobParams() const {

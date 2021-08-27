@@ -12,6 +12,11 @@
 #include "opencv2/gapi/own/exports.hpp" // GAPI_EXPORTS
 
 #ifdef HAVE_ONEVPL
+#if (MFX_VERSION >= 2000)
+#include <vpl/mfxdispatcher.h>
+#endif
+
+#include <vpl/mfx.h>
 
 #ifdef HAVE_DIRECTX
 #ifdef HAVE_D3D11
@@ -32,7 +37,8 @@ class Surface;
 class VPLMediaFrameDX11Adapter : public cv::MediaFrame::IAdapter {
 public:
     // GAPI_EXPORTS for tests
-    GAPI_EXPORTS VPLMediaFrameDX11Adapter(std::shared_ptr<Surface> assoc_surface);
+    GAPI_EXPORTS VPLMediaFrameDX11Adapter(std::shared_ptr<Surface> assoc_surface,
+                                          mfxFrameAllocator alloc);
     GAPI_EXPORTS ~VPLMediaFrameDX11Adapter();
     cv::GFrameDesc meta() const override;
     MediaFrame::View access(MediaFrame::Access) override;
@@ -45,6 +51,7 @@ public:
     static DXGI_FORMAT get_dx11_color_format(uint32_t mfx_fourcc);
 private:
     std::shared_ptr<Surface> parent_surface_ptr;
+    mfxFrameAllocator allocator;
 };
 } // namespace wip
 } // namespace gapi

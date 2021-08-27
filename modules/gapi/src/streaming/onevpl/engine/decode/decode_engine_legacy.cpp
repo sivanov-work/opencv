@@ -70,13 +70,14 @@ VPLLegacyDecodeEngineAsync::VPLLegacyDecodeEngineAsync(std::unique_ptr<VPLAccele
                 } catch (const std::exception& ex) {
                     GAPI_LOG_WARNING(nullptr, "[" << my_sess.session << "] error: " << ex.what() <<
                                             "Abort");
+                    break; //no surface
                 }
             }
 
             if (my_sess.last_status == MFX_ERR_NONE) {
                 my_sess.sync_queue.emplace(sync_pair);
             } else if (MFX_ERR_MORE_DATA != my_sess.last_status) /* suppress MFX_ERR_MORE_DATA warning */ {
-                GAPI_LOG_WARNING(nullptr, "pending ops count: " << my_sess.sync_queue.size() <<
+                GAPI_LOG_WARNING(nullptr, "warn pending ops count: " << my_sess.sync_queue.size() <<
                                         ", sync id: " << sync_pair.first <<
                                         ", status: " << mfxstatus_to_string(my_sess.last_status));
             }
@@ -86,6 +87,7 @@ VPLLegacyDecodeEngineAsync::VPLLegacyDecodeEngineAsync(std::unique_ptr<VPLAccele
         [this] (EngineSession& sess) -> ExecutionStatus
         {
             LegacyDecodeSessionAsync& my_sess = static_cast<LegacyDecodeSessionAsync&>(sess);
+            do {
             if (!my_sess.sync_queue.empty()) // FIFO: check the oldest async operation complete
             {
                 LegacyDecodeSessionAsync::op_handle_t& pending_op = my_sess.sync_queue.front();
@@ -93,11 +95,14 @@ VPLLegacyDecodeEngineAsync::VPLLegacyDecodeEngineAsync(std::unique_ptr<VPLAccele
 
                 GAPI_LOG_DEBUG(nullptr, "pending ops count: " << my_sess.sync_queue.size() <<
                                         ", sync id:  " << pending_op.first <<
+                                        ", surface:  " << pending_op.second <<
                                         ", status: " << mfxstatus_to_string(my_sess.last_status));
                 if (MFX_ERR_NONE == sess.last_status) {
                     on_frame_ready(my_sess, pending_op.second);
                 }
             }
+            } while (MFX_ERR_NONE == sess.last_status && !my_sess.sync_queue.empty());
+
             return ExecutionStatus::Continue;
         },
         // 4) Falls back on generic status procesing
@@ -227,6 +232,7 @@ ProcessingEngineBase::ExecutionStatus VPLLegacyDecodeEngineAsync::process_error(
             } catch (const std::exception& ex) {
                 GAPI_LOG_WARNING(nullptr, "[" << sess.session << "] error: " << ex.what() <<
                                           "Abort");
+                return ExecutionStatus::Continue; // read more data
             }
         }
         case MFX_ERR_MORE_DATA: // The function requires more bitstream at input before decoding can proceed
@@ -248,6 +254,7 @@ ProcessingEngineBase::ExecutionStatus VPLLegacyDecodeEngineAsync::process_error(
             } catch (const std::exception& ex) {
                 GAPI_LOG_WARNING(nullptr, "[" << sess.session << "] error: " << ex.what() <<
                                           "Abort");
+                return ExecutionStatus::Continue; // read more data
             }
             break;
         }
@@ -292,6 +299,7 @@ ProcessingEngineBase::ExecutionStatus VPLLegacyDecodeEngineAsync::process_error(
             } catch (const std::exception& ex) {
                 GAPI_LOG_WARNING(nullptr, "[" << sess.session << "] error: " << ex.what() <<
                                           "Abort");
+                return ExecutionStatus::Continue;
             }
         default:
             GAPI_LOG_WARNING(nullptr, "Unknown status code: " << mfxstatus_to_string(status) <<

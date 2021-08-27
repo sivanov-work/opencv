@@ -51,6 +51,7 @@ void LegacyDecodeSessionAsync::swap_surface(VPLLegacyDecodeEngineAsync& engine) 
     } catch (const std::exception& ex) {
         GAPI_LOG_WARNING(nullptr, "[" << session << "] error: " << ex.what() <<
                                    "Abort");
+        throw ;
     }
 }
 

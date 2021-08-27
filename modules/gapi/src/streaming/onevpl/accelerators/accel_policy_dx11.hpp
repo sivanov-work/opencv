@@ -44,14 +44,18 @@ struct allocation_data_t {
 
     allocation_data_t(std::weak_ptr<allocation_record> parent,
                       ID3D11Texture2D* texture_ptr,
-                      subresource_id_t subresource_id);
+                      subresource_id_t subresource_id,
+                      ID3D11Texture2D* staging_tex_ptr);
     ~allocation_data_t();
 
     void release();
     ID3D11Texture2D* get_texture();
+    ID3D11Texture2D* get_staging_texture();
+    allocation_data_t::subresource_id_t get_subresource() const;
 private:
     ID3D11Texture2D* texture_ptr = nullptr;
     subresource_id_t subresource_id = 0;
+    ID3D11Texture2D* staging_texture_ptr = nullptr;
     std::weak_ptr<allocation_record> observer;
 };
 
@@ -69,12 +73,15 @@ struct allocation_record : public std::enable_shared_from_this<allocation_record
     }
 
     Ptr get_ptr();
-    allocation_data_t* data();
+
+    using AllocationId = allocation_data_t*;
+    AllocationId* data();
 private:
     allocation_record();
-    void init(unsigned int items, ID3D11Texture2D* texture);
+    void init(unsigned int items, ID3D11Texture2D* texture, std::vector<ID3D11Texture2D*> &&staging_textures);
 
-    std::vector<allocation_data_t> resources;
+    std::vector<AllocationId> resources;
+    ID3D11Texture2D* texture_ptr = nullptr;
 };
 
 
@@ -102,6 +109,7 @@ struct GAPI_EXPORTS VPLDX11AccelerationPolicy final: public VPLAccelerationPolic
 
 private:
     ID3D11Device *hw_handle;
+    ID3D11DeviceContext* device_context;
 
     mfxFrameAllocator allocator;
     static mfxStatus MFX_CDECL alloc_cb(mfxHDL pthis,
