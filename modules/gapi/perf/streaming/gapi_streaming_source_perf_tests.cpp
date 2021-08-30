@@ -26,7 +26,8 @@ const std::string codec[] = {
 
 using source_t = std::string;
 using codec_t = std::string;
-using source_description_t = std::tuple<source_t, codec_t>;
+using accel_mode_t = std::string;
+using source_description_t = std::tuple<source_t, codec_t, accel_mode_t>;
 
 class OneVPLSourcePerfTest : public TestPerfParams<source_description_t> {};
 class VideoCapSourcePerfTest : public TestPerfParams<source_t> {};
@@ -38,12 +39,16 @@ PERF_TEST_P_(OneVPLSourcePerfTest, TestPerformance)
   const auto params = GetParam();
   source_t src = findDataFile(get<0>(params));
   codec_t type = get<1>(params);
+  accel_mode_t mode = get<2>(params);
 
   std::vector<oneVPL_cfg_param> cfg_params {
       oneVPL_cfg_param::create<std::string>("mfxImplDescription.Impl", "MFX_IMPL_TYPE_HARDWARE"),
       oneVPL_cfg_param::create("mfxImplDescription.mfxDecoderDescription.decoder.CodecID", type),
   };
 
+  if (!mode.empty()) {
+      cfg_params.push_back(oneVPL_cfg_param::create("mfxImplDescription.AccelerationMode", mode));
+  }
   auto source_ptr = make_vpl_src(src, cfg_params);
   Data out;
   TEST_CYCLE()
@@ -70,8 +75,10 @@ PERF_TEST_P_(VideoCapSourcePerfTest, TestPerformance)
 }
 
 INSTANTIATE_TEST_CASE_P(Streaming, OneVPLSourcePerfTest,
-                        Values(source_description_t(files[0], codec[0]),
-                               source_description_t(files[1], codec[1])));
+                        Values(source_description_t(files[0], codec[0], ""),
+                               source_description_t(files[0], codec[0], "MFX_ACCEL_MODE_VIA_D3D11"),
+                               source_description_t(files[1], codec[1], ""),
+                               source_description_t(files[1], codec[1], "MFX_ACCEL_MODE_VIA_D3D11")));
 
 INSTANTIATE_TEST_CASE_P(Streaming, VideoCapSourcePerfTest,
                         Values(files[0],
