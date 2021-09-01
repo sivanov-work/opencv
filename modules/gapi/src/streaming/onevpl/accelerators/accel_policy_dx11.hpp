@@ -71,9 +71,9 @@ private:
     ID3D11Texture2D* staging_texture_ptr = nullptr;
     std::weak_ptr<allocation_record> observer;
 public:
-    std::atomic<size_t> read_counter;
-    std::atomic<size_t> ready_read;
-    std::atomic<size_t> busy_wait_counter;
+    std::atomic<size_t> incoming_requests;
+    std::atomic<size_t> outgoing_requests;
+    std::atomic<size_t> pending_requests;
 
     std::atomic<bool> reinit;
 };

@@ -67,9 +67,9 @@ allocation_data_t::allocation_data_t(std::weak_ptr<allocation_record> parent,
     subresource_id(subtex_id),
     staging_texture_ptr(staging_tex_ptr),
     observer(parent),
-    read_counter(),
-    ready_read(),
-    busy_wait_counter(),
+    incoming_requests(),
+    outgoing_requests(),
+    pending_requests(),
     reinit(false) {
 
     GAPI_DbgAssert(texture_ptr && "Cannot create allocation_data_t for empty texture");
@@ -542,9 +542,9 @@ mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
 
     GAPI_LOG_DEBUG(nullptr, "texture : " << data->get_texture() << ", sub id: " << data->get_subresource());
 
-    size_t thread_id = data->read_counter.fetch_add(1);
+    size_t thread_id = data->incoming_requests.fetch_add(1);
     if (thread_id == 0) {
-            if (data->ready_read.load() == 0)
+            if (data->outgoing_requests.load() == 0)
             {
                 // TODO - pass desired access in `mid` ext field?
                 D3D11_MAP mapType = D3D11_MAP_READ;
@@ -587,7 +587,7 @@ mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
                         return MFX_ERR_LOCK_MEMORY;
                 }
 
-                data->ready_read.fetch_add(1);
+                data->outgoing_requests.fetch_add(1);
 
                 GAPI_LOG_DEBUG(nullptr, "charged, data: " << data);
                 return MFX_ERR_NONE;
@@ -595,18 +595,18 @@ mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
         //}
 
         abort();
-        data->ready_read.fetch_add(1);
+        data->outgoing_requests.fetch_add(1);
         return MFX_ERR_NONE;
     } else {
         //busy wait for others
-        size_t busy_thread_id = data->busy_wait_counter.fetch_add(1);
+        size_t busy_thread_id = data->pending_requests.fetch_add(1);
 
-        /*while (data->ready_read.load() == 0 &&
-               (data->busy_wait_counter.load() != data->read_counter.load())) {}
+        /*while (data->outgoing_requests.load() == 0 &&
+               (data->pending_requests.load() != data->incoming_requests.load())) {}
         */
-        while (data->ready_read.load() == 0) {
+        while (data->outgoing_requests.load() == 0) {
 
-            if (data->busy_wait_counter.load() != data->read_counter.load()) {
+            if (data->pending_requests.load() != data->incoming_requests.load()) {
                 continue;
             }
             if (busy_thread_id == 0) {
@@ -655,8 +655,8 @@ mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
                         return MFX_ERR_LOCK_MEMORY;
                 }
 
-                data->ready_read.fetch_add(1);
-                data->busy_wait_counter.fetch_sub(1);
+                data->outgoing_requests.fetch_add(1);
+                data->pending_requests.fetch_sub(1);
                 GAPI_LOG_DEBUG(nullptr, "REcharged, data: " << data);
                 return MFX_ERR_NONE;
                     ///////////////////////////////////
@@ -667,18 +667,18 @@ mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
         }
 
         /*
-        * while (ready_read == 0) {
-        *         compares_exhnage_string(data->busy_wait_counter.load() != data->read_counter.load())
+        * while (outgoing_requests == 0) {
+        *         compares_exhnage_string(data->pending_requests.load() != data->incoming_requests.load())
         *       {
         *          call off happens
         *       }
         * }
         */
         // go out busy wait
-        data->busy_wait_counter.fetch_sub(1);
+        data->pending_requests.fetch_sub(1);
     }
 
-    data->ready_read++;
+    data->outgoing_requests++;
     return MFX_ERR_NONE;
 }
 
@@ -690,10 +690,10 @@ mfxStatus VPLDX11AccelerationPolicy::on_unlock(mfxMemId mid, mfxFrameData *ptr) 
     }
 
     GAPI_LOG_DEBUG(nullptr, "texture: " << data->get_texture() << ", sub id: " << data->get_subresource());
-    size_t thread_id = data->ready_read.fetch_sub(1);
+    size_t thread_id = data->outgoing_requests.fetch_sub(1);
     if (thread_id == 1) {// i'm the last thread - release texture
         //size_t ready_expected = 1;
-        if (data->read_counter.load() == 1) {
+        if (data->incoming_requests.load() == 1) {
             //TODO no write!!!
             device_context->Unmap(data->get_staging_texture(), 0);
 
@@ -705,14 +705,14 @@ mfxStatus VPLDX11AccelerationPolicy::on_unlock(mfxMemId mid, mfxFrameData *ptr) 
             //
             data->reinit.store(true);
             //
-            data->read_counter.fetch_sub(1);
+            data->incoming_requests.fetch_sub(1);
 
             GAPI_LOG_DEBUG(nullptr, "UNcharged, data: " << data);
             return MFX_ERR_NONE;
         }
     }
 
-    data->read_counter.fetch_sub(1);
+    data->incoming_requests.fetch_sub(1);
     return MFX_ERR_NONE;
 }
 
