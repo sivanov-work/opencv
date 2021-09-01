@@ -244,6 +244,8 @@ OneVPLSource::Priv::Priv(std::shared_ptr<IDataProvider> provider, const std::vec
 
 OneVPLSource::Priv::~Priv()
 {
+    engine.reset();
+
     GAPI_LOG_INFO(nullptr, "Unload MFX handle: " << mfx_handle);
     MFXUnload(mfx_handle);
 }

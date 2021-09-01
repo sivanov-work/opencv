@@ -11,6 +11,7 @@
 #include <opencv2/gapi/media.hpp>
 #include "opencv2/gapi/own/exports.hpp" // GAPI_EXPORTS
 
+#include "streaming/onevpl/accelerators/surface/shared_lock.hpp"
 #ifdef HAVE_ONEVPL
 #if (MFX_VERSION >= 2000)
 #include <vpl/mfxdispatcher.h>
@@ -34,7 +35,8 @@ namespace gapi {
 namespace wip {
 
 class Surface;
-class VPLMediaFrameDX11Adapter : public cv::MediaFrame::IAdapter {
+class VPLMediaFrameDX11Adapter : public cv::MediaFrame::IAdapter,
+                                 public SharedLock {
 public:
     // GAPI_EXPORTS for tests
     GAPI_EXPORTS VPLMediaFrameDX11Adapter(std::shared_ptr<Surface> assoc_surface,

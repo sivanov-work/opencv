@@ -173,6 +173,7 @@ VPLLegacyDecodeEngineAsync::initialize_session(mfxSession mfx_session,
 
     // External (application) allocation of decode surfaces
     GAPI_LOG_DEBUG(nullptr, "Query IOSurf for session: " << mfx_session <<
+                            ", mfxFrameAllocRequest.NumFrameMin: " << decRequest.NumFrameMin <<
                             ", mfxFrameAllocRequest.NumFrameSuggested: " << decRequest.NumFrameSuggested <<
                             ", mfxFrameAllocRequest.Type: " << decRequest.Type);
 

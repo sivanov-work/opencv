@@ -180,6 +180,7 @@ if(HAVE_GAPI_ONEVPL)
         src/streaming/onevpl/accelerators/surface/dx11_frame_adapter.cpp
         src/streaming/onevpl/accelerators/surface/surface.cpp
         src/streaming/onevpl/accelerators/surface/surface_pool.cpp
+        src/streaming/onevpl/accelerators/surface/shared_lock.cpp
         src/streaming/onevpl/accelerators/accel_policy_cpu.cpp
         src/streaming/onevpl/accelerators/accel_policy_dx11.cpp
 

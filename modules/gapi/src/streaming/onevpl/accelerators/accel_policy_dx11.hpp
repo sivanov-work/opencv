@@ -16,6 +16,7 @@
 #include <vpl/mfxvideo.h>
 #include "streaming/onevpl/accelerators/accel_policy_interface.hpp"
 #include "streaming/onevpl/accelerators/surface/surface_pool.hpp"
+#include "streaming/onevpl/accelerators/surface/shared_lock.hpp"
 
 #ifdef CPU_ACCEL_ADAPTER
 #include "streaming/onevpl/accelerators/accel_policy_cpu.hpp"
@@ -37,9 +38,21 @@ namespace gapi {
 namespace wip {
 
 
-struct allocation_record;
+struct lockable {
+    size_t read_lock();
+    size_t unlock_read();
 
-struct allocation_data_t {
+    void write_lock();
+    void unlock_write();
+
+    SharedLock* set_locable_impl(SharedLock* new_impl);
+    SharedLock* get_locable_impl();
+private:
+    SharedLock* impl = nullptr;
+};
+
+struct allocation_record;
+struct allocation_data_t : public lockable {
     using subresource_id_t = unsigned int;
 
     allocation_data_t(std::weak_ptr<allocation_record> parent,
@@ -57,6 +70,12 @@ private:
     subresource_id_t subresource_id = 0;
     ID3D11Texture2D* staging_texture_ptr = nullptr;
     std::weak_ptr<allocation_record> observer;
+public:
+    std::atomic<size_t> read_counter;
+    std::atomic<size_t> ready_read;
+    std::atomic<size_t> busy_wait_counter;
+
+    std::atomic<bool> reinit;
 };
 
 struct allocation_record : public std::enable_shared_from_this<allocation_record> {

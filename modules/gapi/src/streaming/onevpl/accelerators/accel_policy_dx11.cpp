@@ -30,6 +30,35 @@ namespace cv {
 namespace gapi {
 namespace wip {
 
+size_t lockable::read_lock() {
+    //GAPI_DbgAssert(impl && "No impl");
+    if(!impl) return 0;
+    return impl->shared_lock();
+}
+size_t lockable::unlock_read() {
+    //GAPI_DbgAssert(impl && "No impl");
+    if(!impl) return 0;
+    return impl->unlock_shared();
+}
+void lockable::write_lock() {
+    //GAPI_DbgAssert(impl && "No impl");
+    if(!impl) return;
+    return impl->lock();
+}
+void lockable::unlock_write() {
+    //GAPI_DbgAssert(impl && "No impl");
+    if(!impl) return;
+    return impl->unlock();
+}
+SharedLock* lockable::set_locable_impl(SharedLock* new_impl) {
+    SharedLock* old_impl = impl;
+    impl = new_impl;
+    return old_impl;
+}
+SharedLock* lockable::get_locable_impl() {
+    return impl;
+}
+
 allocation_data_t::allocation_data_t(std::weak_ptr<allocation_record> parent,
                                      ID3D11Texture2D* tex_ptr,
                                      subresource_id_t subtex_id,
@@ -37,7 +66,11 @@ allocation_data_t::allocation_data_t(std::weak_ptr<allocation_record> parent,
     texture_ptr(tex_ptr),
     subresource_id(subtex_id),
     staging_texture_ptr(staging_tex_ptr),
-    observer(parent) {
+    observer(parent),
+    read_counter(),
+    ready_read(),
+    busy_wait_counter(),
+    reinit(false) {
 
     GAPI_DbgAssert(texture_ptr && "Cannot create allocation_data_t for empty texture");
     GAPI_DbgAssert(staging_tex_ptr && "Cannot create allocation_data_t for empty staging texture");
@@ -245,7 +278,7 @@ VPLDX11AccelerationPolicy::create_surface_pool(size_t pool_size, size_t surface_
 }
 
 VPLDX11AccelerationPolicy::pool_key_t
-VPLDX11AccelerationPolicy::create_surface_pool(const mfxFrameAllocRequest& alloc_request,
+VPLDX11AccelerationPolicy::create_surface_pool(const mfxFrameAllocRequest& alloc_req,
                                                mfxVideoParam& param) {
 
     param.IOPattern = MFX_IOPATTERN_OUT_VIDEO_MEMORY;
@@ -253,8 +286,8 @@ VPLDX11AccelerationPolicy::create_surface_pool(const mfxFrameAllocRequest& alloc
     // allocate textures by explicit request
     mfxFrameAllocResponse mfxResponse;
     //TODO
-    //mfxFrameAllocRequest alloc_request = alloc_req;
-    //alloc_request.NumFrameSuggested = alloc_request.NumFrameSuggested * 5;
+    mfxFrameAllocRequest alloc_request = alloc_req;
+    alloc_request.NumFrameSuggested = alloc_request.NumFrameSuggested * 5;
     mfxStatus sts = on_alloc(&alloc_request, &mfxResponse);
     if (sts != MFX_ERR_NONE)
     {
@@ -356,6 +389,8 @@ mfxStatus VPLDX11AccelerationPolicy::alloc_cb(mfxHDL pthis, mfxFrameAllocRequest
     }
 
     VPLDX11AccelerationPolicy *self = static_cast<VPLDX11AccelerationPolicy *>(pthis);
+
+    request->NumFrameSuggested *= 5;
     return self->on_alloc(request, response);
 }
 
@@ -400,6 +435,7 @@ mfxStatus VPLDX11AccelerationPolicy::on_alloc(const mfxFrameAllocRequest *reques
     GAPI_LOG_DEBUG(nullptr, "Requestend allocation id: " << std::to_string(request->AllocId) <<
                             ", type: " << ext_mem_frame_type_to_cstr(request->Type) <<
                             ", size: " << request->Info.Width << "x" << request->Info.Height <<
+                            ", frames minimum count: " << request->NumFrameMin <<
                             ", frames sugested count: " << request->NumFrameSuggested);
     auto table_it = allocation_table.find(request->AllocId);
     if (allocation_table.end() != table_it) {
@@ -506,43 +542,143 @@ mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
 
     GAPI_LOG_DEBUG(nullptr, "texture : " << data->get_texture() << ", sub id: " << data->get_subresource());
 
-    // TODO - pass desired access in `mid` ext field?
-    D3D11_MAP mapType = D3D11_MAP_READ;
-    UINT mapFlags = D3D11_MAP_FLAG_DO_NOT_WAIT;
+    size_t thread_id = data->read_counter.fetch_add(1);
+    if (thread_id == 0) {
+            if (data->ready_read.load() == 0)
+            {
+                // TODO - pass desired access in `mid` ext field?
+                D3D11_MAP mapType = D3D11_MAP_READ;
+                UINT mapFlags = D3D11_MAP_FLAG_DO_NOT_WAIT;
 
-    device_context->CopySubresourceRegion(data->get_staging_texture(), 0,
-                                          0, 0, 0,
-                                          data->get_texture(), data->get_subresource(),
-                                          nullptr);
-    HRESULT err = S_OK;
-    D3D11_MAPPED_SUBRESOURCE lockedRect {};
-    do {
-        err = device_context->Map(data->get_staging_texture(), 0, mapType, mapFlags, &lockedRect);
-        if (S_OK != err && DXGI_ERROR_WAS_STILL_DRAWING != err) {
-            GAPI_LOG_WARNING(nullptr, "Cannot Map staging texture in device context, error: " << std::to_string(HRESULT_CODE(err)));
-            return MFX_ERR_LOCK_MEMORY;
+                device_context->CopySubresourceRegion(data->get_staging_texture(), 0,
+                                                    0, 0, 0,
+                                                    data->get_texture(), data->get_subresource(),
+                                                    nullptr);
+                HRESULT err = S_OK;
+                D3D11_MAPPED_SUBRESOURCE lockedRect {};
+                do {
+                    err = device_context->Map(data->get_staging_texture(), 0, mapType, mapFlags, &lockedRect);
+                    if (S_OK != err && DXGI_ERROR_WAS_STILL_DRAWING != err) {
+                        GAPI_LOG_WARNING(nullptr, "Cannot Map staging texture in device context, error: " << std::to_string(HRESULT_CODE(err)));
+                        return MFX_ERR_LOCK_MEMORY;
+                    }
+                } while (DXGI_ERROR_WAS_STILL_DRAWING == err);
+
+                if (FAILED(err)) {
+                    GAPI_LOG_WARNING(nullptr, "Cannot lock frame");
+                    return MFX_ERR_LOCK_MEMORY;
+                }
+
+                D3D11_TEXTURE2D_DESC desc {};
+                data->get_texture()->GetDesc(&desc);
+                switch (desc.Format) {
+                    case DXGI_FORMAT_NV12:
+                        ptr->Pitch = (mfxU16)lockedRect.RowPitch;
+                        ptr->Y     = (mfxU8 *)lockedRect.pData;
+            /*            ptr->U     = (mfxU8 *)lockedRect.pData + desc.Height * lockedRect.RowPitch;
+                        ptr->V     = ptr->U + 1;
+            */
+                        ptr->UV     = (mfxU8 *)lockedRect.pData + desc.Height * lockedRect.RowPitch;
+
+                        GAPI_Assert(ptr->Y && ptr->UV/* && ptr->V */&& "DXGI_FORMAT_NV12 locked frame data is nullptr");
+                        break;
+                    default:
+                        GAPI_LOG_WARNING(nullptr, "Unknown DXGI format: " << desc.Format);
+                        return MFX_ERR_LOCK_MEMORY;
+                }
+
+                data->ready_read.fetch_add(1);
+
+                GAPI_LOG_DEBUG(nullptr, "charged, data: " << data);
+                return MFX_ERR_NONE;
+            }
+        //}
+
+        abort();
+        data->ready_read.fetch_add(1);
+        return MFX_ERR_NONE;
+    } else {
+        //busy wait for others
+        size_t busy_thread_id = data->busy_wait_counter.fetch_add(1);
+
+        /*while (data->ready_read.load() == 0 &&
+               (data->busy_wait_counter.load() != data->read_counter.load())) {}
+        */
+        while (data->ready_read.load() == 0) {
+
+            if (data->busy_wait_counter.load() != data->read_counter.load()) {
+                continue;
+            }
+            if (busy_thread_id == 0) {
+                bool expected_reinit = true;
+                if(data->reinit.compare_exchange_strong(expected_reinit, false)) {
+
+                    ///////////////////////////////////
+                    // TODO - pass desired access in `mid` ext field?
+                D3D11_MAP mapType = D3D11_MAP_READ;
+                UINT mapFlags = D3D11_MAP_FLAG_DO_NOT_WAIT;
+
+                device_context->CopySubresourceRegion(data->get_staging_texture(), 0,
+                                                    0, 0, 0,
+                                                    data->get_texture(), data->get_subresource(),
+                                                    nullptr);
+                HRESULT err = S_OK;
+                D3D11_MAPPED_SUBRESOURCE lockedRect {};
+                do {
+                    err = device_context->Map(data->get_staging_texture(), 0, mapType, mapFlags, &lockedRect);
+                    if (S_OK != err && DXGI_ERROR_WAS_STILL_DRAWING != err) {
+                        GAPI_LOG_WARNING(nullptr, "Cannot Map staging texture in device context, error: " << std::to_string(HRESULT_CODE(err)));
+                        return MFX_ERR_LOCK_MEMORY;
+                    }
+                } while (DXGI_ERROR_WAS_STILL_DRAWING == err);
+
+                if (FAILED(err)) {
+                    GAPI_LOG_WARNING(nullptr, "Cannot lock frame");
+                    return MFX_ERR_LOCK_MEMORY;
+                }
+
+                D3D11_TEXTURE2D_DESC desc {};
+                data->get_texture()->GetDesc(&desc);
+                switch (desc.Format) {
+                    case DXGI_FORMAT_NV12:
+                        ptr->Pitch = (mfxU16)lockedRect.RowPitch;
+                        ptr->Y     = (mfxU8 *)lockedRect.pData;
+            /*            ptr->U     = (mfxU8 *)lockedRect.pData + desc.Height * lockedRect.RowPitch;
+                        ptr->V     = ptr->U + 1;
+            */
+                        ptr->UV     = (mfxU8 *)lockedRect.pData + desc.Height * lockedRect.RowPitch;
+
+                        GAPI_Assert(ptr->Y && ptr->UV/* && ptr->V */&& "DXGI_FORMAT_NV12 locked frame data is nullptr");
+                        break;
+                    default:
+                        GAPI_LOG_WARNING(nullptr, "Unknown DXGI format: " << desc.Format);
+                        return MFX_ERR_LOCK_MEMORY;
+                }
+
+                data->ready_read.fetch_add(1);
+                data->busy_wait_counter.fetch_sub(1);
+                GAPI_LOG_DEBUG(nullptr, "REcharged, data: " << data);
+                return MFX_ERR_NONE;
+                    ///////////////////////////////////
+                } else {
+                    break; //quit busy loop
+                }
+            }
         }
-    } while (DXGI_ERROR_WAS_STILL_DRAWING == err);
 
-    if (FAILED(err)) {
-        GAPI_LOG_WARNING(nullptr, "Cannot lock frame");
-        return MFX_ERR_LOCK_MEMORY;
+        /*
+        * while (ready_read == 0) {
+        *         compares_exhnage_string(data->busy_wait_counter.load() != data->read_counter.load())
+        *       {
+        *          call off happens
+        *       }
+        * }
+        */
+        // go out busy wait
+        data->busy_wait_counter.fetch_sub(1);
     }
 
-    D3D11_TEXTURE2D_DESC desc {};
-    data->get_texture()->GetDesc(&desc);
-    switch (desc.Format) {
-        case DXGI_FORMAT_NV12:
-            ptr->Pitch = (mfxU16)lockedRect.RowPitch;
-            ptr->Y     = (mfxU8 *)lockedRect.pData;
-            ptr->U     = (mfxU8 *)lockedRect.pData + desc.Height * lockedRect.RowPitch;
-            ptr->V     = ptr->U + 1;
-            break;
-        default:
-            GAPI_LOG_WARNING(nullptr, "Unknown DXGI format: " << desc.Format);
-            return MFX_ERR_LOCK_MEMORY;
-    }
-
+    data->ready_read++;
     return MFX_ERR_NONE;
 }
 
@@ -553,16 +689,30 @@ mfxStatus VPLDX11AccelerationPolicy::on_unlock(mfxMemId mid, mfxFrameData *ptr) 
         return MFX_ERR_LOCK_MEMORY;
     }
 
-    //TODO no write!!!
-    GAPI_LOG_DEBUG(nullptr, "texture : " << data->get_texture() << ", sub id: " << data->get_subresource());
-    device_context->Unmap(data->get_staging_texture(), 0);
+    GAPI_LOG_DEBUG(nullptr, "texture: " << data->get_texture() << ", sub id: " << data->get_subresource());
+    size_t thread_id = data->ready_read.fetch_sub(1);
+    if (thread_id == 1) {// i'm the last thread - release texture
+        //size_t ready_expected = 1;
+        if (data->read_counter.load() == 1) {
+            //TODO no write!!!
+            device_context->Unmap(data->get_staging_texture(), 0);
 
-    if (ptr) {
-        ptr->Pitch = 0;
-        ptr->U = ptr->V = ptr->Y = 0;
-        ptr->A = ptr->R = ptr->G = ptr->B = 0;
+            if (ptr) {
+                ptr->Pitch = 0;
+                ptr->U = ptr->V = ptr->Y = 0;
+                ptr->A = ptr->R = ptr->G = ptr->B = 0;
+            }
+            //
+            data->reinit.store(true);
+            //
+            data->read_counter.fetch_sub(1);
+
+            GAPI_LOG_DEBUG(nullptr, "UNcharged, data: " << data);
+            return MFX_ERR_NONE;
+        }
     }
 
+    data->read_counter.fetch_sub(1);
     return MFX_ERR_NONE;
 }
 

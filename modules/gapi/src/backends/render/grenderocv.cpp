@@ -4,6 +4,7 @@
 
 #include <opencv2/gapi/cpu/gcpukernel.hpp>
 #include <opencv2/gapi/fluid/core.hpp>
+#include "logger.hpp"
 
 struct RenderOCVState
 {
@@ -121,6 +122,7 @@ GAPI_OCV_KERNEL_ST(RenderFrameOCVImpl, cv::gapi::wip::draw::GRenderFrame, Render
                     cv::MediaFrame & out,
                     RenderOCVState & state)
     {
+//        GAPI_LOG_WARNING(nullptr, "-S- ACCESS");
         GAPI_Assert(in.desc().fmt == cv::MediaFormat::NV12);
 
         // FIXME: consider a better approach (aka native inplace operation)
@@ -128,15 +130,13 @@ GAPI_OCV_KERNEL_ST(RenderFrameOCVImpl, cv::gapi::wip::draw::GRenderFrame, Render
         out = in;
 
         auto desc = out.desc();
-        auto w_out = out.access(cv::MediaFrame::Access::W);
 
-        auto out_y = cv::Mat(desc.size, CV_8UC1, w_out.ptr[0], w_out.stride[0]);
-        auto out_uv = cv::Mat(desc.size / 2, CV_8UC2, w_out.ptr[1], w_out.stride[1]);
+        cv::Mat upsample_uv, yuv;
+        {
+            auto r_in = in.access(cv::MediaFrame::Access::R);
 
-        auto r_in = in.access(cv::MediaFrame::Access::R);
-
-        auto in_y = cv::Mat(desc.size, CV_8UC1, r_in.ptr[0], r_in.stride[0]);
-        auto in_uv = cv::Mat(desc.size / 2, CV_8UC2, r_in.ptr[1], r_in.stride[1]);
+            auto in_y = cv::Mat(desc.size, CV_8UC1, r_in.ptr[0], r_in.stride[0]);
+            auto in_uv = cv::Mat(desc.size / 2, CV_8UC2, r_in.ptr[1], r_in.stride[1]);
 
         /* FIXME How to render correctly on NV12 format ?
          *
@@ -157,19 +157,26 @@ GAPI_OCV_KERNEL_ST(RenderFrameOCVImpl, cv::gapi::wip::draw::GRenderFrame, Render
          *
          */
 
-         // NV12 -> YUV
-        cv::Mat upsample_uv, yuv;
-        cv::resize(in_uv, upsample_uv, in_uv.size() * 2, cv::INTER_LINEAR);
-        cv::merge(std::vector<cv::Mat>{in_y, upsample_uv}, yuv);
+            // NV12 -> YUV
+            cv::resize(in_uv, upsample_uv, in_uv.size() * 2, cv::INTER_LINEAR);
+            cv::merge(std::vector<cv::Mat>{in_y, upsample_uv}, yuv);
+        }
 
         cv::gapi::wip::draw::drawPrimitivesOCVYUV(yuv, prims, state.ftpr);
 
         // YUV -> NV12
-        cv::Mat out_u, out_v, uv_plane;
-        std::vector<cv::Mat> chs = { out_y, out_u, out_v };
-        cv::split(yuv, chs);
-        cv::merge(std::vector<cv::Mat>{chs[1], chs[2]}, uv_plane);
-        cv::resize(uv_plane, out_uv, uv_plane.size() / 2, cv::INTER_LINEAR);
+        {
+            auto w_out = out.access(cv::MediaFrame::Access::W);
+
+            auto out_y = cv::Mat(desc.size, CV_8UC1, w_out.ptr[0], w_out.stride[0]);
+            auto out_uv = cv::Mat(desc.size / 2, CV_8UC2, w_out.ptr[1], w_out.stride[1]);
+
+            cv::Mat out_u, out_v, uv_plane;
+            std::vector<cv::Mat> chs = { out_y, out_u, out_v };
+            cv::split(yuv, chs);
+            cv::merge(std::vector<cv::Mat>{chs[1], chs[2]}, uv_plane);
+            cv::resize(uv_plane, out_uv, uv_plane.size() / 2, cv::INTER_LINEAR);
+        }
     }
 
     static void setup(const cv::GFrameDesc&   /* in_nv12  */,
