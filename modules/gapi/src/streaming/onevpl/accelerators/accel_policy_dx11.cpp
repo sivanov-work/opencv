@@ -609,7 +609,7 @@ mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
         return MFX_ERR_NONE;
     } else {
         /*
-         * 1)
+         * CASE 1)
          *
          * busy wait for others `incoming` requests for resource initialization
          * besides main `incoming` request which are getting on
@@ -620,7 +620,7 @@ mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
         // OR
 
         /*
-         * 2)
+         * CASE 2)
          *
          * busy wait for ALL `incoming` request for resource initialization
          * including main `incoming` request. It will happen if
@@ -635,7 +635,7 @@ mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
         size_t busy_thread_id = data->pending_requests.fetch_add(1);
 
         /*
-         * 1)
+         * CASE 1)
          *
          * Non empty `outgoing` requests count means that other further `incoming` or
          * `busy-wait` request are getting on with its job
@@ -647,12 +647,12 @@ mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
             // OR
 
             /*
-             * 2)
+             * CASE 2)
              *
              * In case of NO master `incoming `request is available and doesn't
              * provide resource initialization. All `incoming` requests must be in
              * busy-wait state.
-             * If it is not true that 1) case is going on
+             * If it is not true then CASE 1) is going on
              *
              * OR
              *
@@ -661,7 +661,7 @@ mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
              */
             if (data->pending_requests.load() == data->incoming_requests.load()) {
                 /*
-                 * 2) ONLY
+                 * CASE 2) ONLY
                  *
                  * It will happen if 'on_unlock` in another thread
                  * finishes its execution only
@@ -761,12 +761,13 @@ mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
             }
         }
 
+
+        // All non main requests became `outgoing` and look at on initialized resource
+        data->outgoing_requests++;
+
         // Each `busy-wait` request are not busy-wait now
         data->pending_requests.fetch_sub(1);
     }
-
-    // All non main requests became `outgoing` and look at on initialized resource
-    data->outgoing_requests++;
 
     GAPI_Assert(ptr->Y && (ptr->UV || (ptr->U && ptr->V)) &&
                 "on_lock: data must exist for charging `outgoing_requests`");
@@ -781,28 +782,82 @@ mfxStatus VPLDX11AccelerationPolicy::on_unlock(mfxMemId mid, mfxFrameData *ptr) 
     }
 
     GAPI_LOG_DEBUG(nullptr, "texture: " << data->get_texture() << ", sub id: " << data->get_subresource());
-    size_t thread_id = data->outgoing_requests.fetch_sub(1);
-    if (thread_id == 1) {// i'm the last thread - release texture
-        //size_t ready_expected = 1;
-        if (data->incoming_requests.load() == 1) {
-            //TODO no write!!!
-            device_context->Unmap(data->get_staging_texture(), 0);
 
+    /*
+     * Each released `outgoing` request checks out to doesn't use resource anymore.
+     * The last `outgoing` request becomes main `outgoing` request and
+     * must deinitialize resource if no `incoming` or `busy-wait` requests
+     * are waiting for it
+     */
+    size_t thread_id = data->outgoing_requests.fetch_sub(1);
+    if (thread_id == 1) {
+        /*
+         * Make sure that no another `incoming` (including `busy-wait)
+         * exists.
+         * But beforehand its must make sure that no `incoming` or `pending`
+         * requests are exist.
+         *
+         * The main `outgoing` request is an one of `incoming` request
+         * (it is the oldest one in the current `incoming` bunch) and still
+         * holds resource in initialized state (thus we compare with 1).
+         * We must not deinitialize resource before decrease
+         * `incoming` requests counter because
+         * after it has got 0 value in `on_lock` another thread
+         * will start initialize resource procedure which will get conflict
+         * with current deinitialize procedure
+         *
+         * From this point, all `on_lock` request in another thread would
+         * become `busy-wait` without reaching main `incoming` state (CASE 2)
+         * */
+        if (data->incoming_requests.load() == 1) {
+            /*
+            * The main `outgoing` request is ready to deinit shared resource
+            * in unconflicting manner.
+            *
+            * This is a critical section for single thread for main `outgoing`
+            * request
+            *
+            * CASE 2 only available in `on_lock` thread
+            * */
+            device_context->Unmap(data->get_staging_texture(), 0);
             if (ptr) {
                 ptr->Pitch = 0;
                 ptr->U = ptr->V = ptr->Y = 0;
                 ptr->A = ptr->R = ptr->G = ptr->B = 0;
             }
-            //
+
+            /*
+             * Before main `outgoinq` request become released it must notify
+             * subsequent `busy-wait` requests in `on_lock` in another thread
+             * that main `busy-wait` must start reinit resource procedure
+             * */
             data->reinit.store(true);
-            //
             GAPI_Assert(!ptr->Y && !(ptr->UV || (ptr->U && ptr->V)) &&
                         "on_unlock: data must be cleared after last `incoming_requests`");
+
+            /*
+             * Deinitialize procedure is finished and main `outgoing` request
+             * (it is the oldest one in `incoming` request) must become released
+             *
+             * Right after when we decrease `incoming` counter
+             * the condition for equality
+             * `busy-wait` and `incoming` counter will become true (CASE 2 only)
+             * in `on_lock` in another threads. After that
+             * a main `busy-wait` request would check `reinit` condition
+             * */
             data->incoming_requests.fetch_sub(1);
 
             GAPI_LOG_DEBUG(nullptr, "UNcharged, data: " << data);
             return MFX_ERR_NONE;
         }
+
+        /*
+         * At this point we have guarantee that new `incoming` requests
+         * had became increased in `on_lock` in another thread right before
+         * current thread deinitialize resource.
+         *
+         * So call off deinitialization procedure here
+         * */
     }
 
     GAPI_Assert(ptr->Y && (ptr->UV || (ptr->U && ptr->V)) &&
