@@ -39,6 +39,10 @@ void SharedLock::lock() {
 void SharedLock::unlock() {
     counter.store(0);
 }
+
+bool SharedLock::owns() const {
+    return (counter.load() == EXCLUSIVE_ACCESS);
+}
 } // namespace wip
 } // namespace gapi
 } // namespace cv

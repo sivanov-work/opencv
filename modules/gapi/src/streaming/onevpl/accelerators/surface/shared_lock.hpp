@@ -29,6 +29,7 @@ public:
     void lock();
     void unlock();
 
+    bool owns() const;
 private:
     SharedLock(const SharedLock&) = delete;
     SharedLock& operator= (const SharedLock&) = delete;

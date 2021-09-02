@@ -45,6 +45,12 @@ void lockable::write_lock() {
     if(!impl) return;
     return impl->lock();
 }
+
+bool lockable::is_write_acquired() {
+    if(!impl) return true;
+    return impl->owns();
+}
+
 void lockable::unlock_write() {
     //GAPI_DbgAssert(impl && "No impl");
     if(!impl) return;
@@ -197,10 +203,10 @@ void VPLDX11AccelerationPolicy::init(session_t session) {
     //Create device
     UINT creationFlags = 0;//D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 
-//#if defined(_DEBUG)
+#if defined _DEBUG || defined CV_STATIC_ANALYSIS
     // If the project is in a debug build, enable debugging via SDK Layers with this flag.
     creationFlags |= D3D11_CREATE_DEVICE_DEBUG;
-//#endif
+#endif
 
     // This array defines the set of DirectX hardware feature levels this app will support.
     // Note the ordering should be preserved.
@@ -487,7 +493,7 @@ mfxStatus VPLDX11AccelerationPolicy::on_alloc(const mfxFrameAllocRequest *reques
     // create  staging texture to read it from
     desc.ArraySize      = 1;
     desc.Usage          = D3D11_USAGE_STAGING;
-    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
     desc.BindFlags      = 0;
     desc.MiscFlags      = 0;
     std::vector<ID3D11Texture2D*> staging_textures;
@@ -542,6 +548,47 @@ mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
 
     GAPI_LOG_DEBUG(nullptr, "texture : " << data->get_texture() << ", sub id: " << data->get_subresource());
 
+    // check lock type: write lock is quite simple
+    if (data->is_write_acquired()) {
+        GAPI_LOG_DEBUG(nullptr, "try obtain WRITE lock on data: " << data);
+        D3D11_MAP mapType = D3D11_MAP_WRITE;
+        UINT mapFlags = D3D11_MAP_FLAG_DO_NOT_WAIT;
+
+        HRESULT err = S_OK;
+        D3D11_MAPPED_SUBRESOURCE lockedRect {};
+        do {
+            err = device_context->Map(data->get_staging_texture(), 0, mapType, mapFlags, &lockedRect);
+            if (S_OK != err && DXGI_ERROR_WAS_STILL_DRAWING != err) {
+                GAPI_LOG_WARNING(nullptr, "Cannot Map staging texture in device context, error: " << std::to_string(HRESULT_CODE(err)));
+                return MFX_ERR_LOCK_MEMORY;
+            }
+        } while (DXGI_ERROR_WAS_STILL_DRAWING == err);
+
+        if (FAILED(err)) {
+            GAPI_LOG_WARNING(nullptr, "Cannot lock frame");
+            return MFX_ERR_LOCK_MEMORY;
+        }
+
+        D3D11_TEXTURE2D_DESC desc {};
+        data->get_texture()->GetDesc(&desc);
+        switch (desc.Format) {
+            case DXGI_FORMAT_NV12:
+                ptr->Pitch = (mfxU16)lockedRect.RowPitch;
+                ptr->Y     = (mfxU8 *)lockedRect.pData;
+                ptr->UV     = (mfxU8 *)lockedRect.pData + desc.Height * lockedRect.RowPitch;
+
+                GAPI_Assert(ptr->Y && ptr->UV/* && ptr->V */&& "DXGI_FORMAT_NV12 locked frame data is nullptr");
+                break;
+            default:
+                GAPI_LOG_WARNING(nullptr, "Unknown DXGI format: " << desc.Format);
+                return MFX_ERR_LOCK_MEMORY;
+        }
+
+        GAPI_LOG_DEBUG(nullptr, "WRITE access granted to data: " << data);
+        return MFX_ERR_NONE;
+    }
+
+    // Read access is more complex
     // each `incoming` request must check in before acquire resource
     size_t thread_id = data->incoming_requests.fetch_add(1);
     if (thread_id == 0) {
@@ -783,6 +830,27 @@ mfxStatus VPLDX11AccelerationPolicy::on_unlock(mfxMemId mid, mfxFrameData *ptr) 
 
     GAPI_LOG_DEBUG(nullptr, "texture: " << data->get_texture() << ", sub id: " << data->get_subresource());
 
+    // check unlock type: write un lock is quite simple
+    if (data->is_write_acquired()) {
+        GAPI_LOG_DEBUG(nullptr, "try obtain WRITE unlock on data: " << data);
+        device_context->Unmap(data->get_staging_texture(), 0);
+
+        device_context->CopySubresourceRegion(data->get_texture(),
+                                              data->get_subresource(),
+                                              0, 0, 0,
+                                              data->get_staging_texture(), 0,
+                                              nullptr);
+
+
+        if (ptr) {
+            ptr->Pitch = 0;
+            ptr->U = ptr->V = ptr->Y = 0;
+            ptr->A = ptr->R = ptr->G = ptr->B = 0;
+        }
+        return MFX_ERR_NONE;
+    }
+
+    // Read unlock
     /*
      * Each released `outgoing` request checks out to doesn't use resource anymore.
      * The last `outgoing` request becomes main `outgoing` request and

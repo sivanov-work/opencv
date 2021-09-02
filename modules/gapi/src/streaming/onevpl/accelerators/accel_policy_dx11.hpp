@@ -43,6 +43,7 @@ struct lockable {
     size_t unlock_read();
 
     void write_lock();
+    bool is_write_acquired();
     void unlock_write();
 
     SharedLock* set_locable_impl(SharedLock* new_impl);
