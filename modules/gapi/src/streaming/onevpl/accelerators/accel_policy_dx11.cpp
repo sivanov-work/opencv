@@ -72,11 +72,7 @@ allocation_data_t::allocation_data_t(std::weak_ptr<allocation_record> parent,
     texture_ptr(tex_ptr),
     subresource_id(subtex_id),
     staging_texture_ptr(staging_tex_ptr),
-    observer(parent),
-    incoming_requests(),
-    outgoing_requests(),
-    pending_requests(),
-    reinit(false) {
+    observer(parent) {
 
     GAPI_DbgAssert(texture_ptr && "Cannot create allocation_data_t for empty texture");
     GAPI_DbgAssert(staging_tex_ptr && "Cannot create allocation_data_t for empty staging texture");
@@ -120,6 +116,55 @@ ID3D11Texture2D* allocation_data_t::get_staging_texture() {
 allocation_data_t::subresource_id_t allocation_data_t::get_subresource() const {
     return subresource_id;
 }
+////////////////////////////////////////////////////////////////////////////////
+void allocation_data_t::on_first_in_impl(ID3D11DeviceContext* device_context, mfxFrameData *ptr) {
+    D3D11_MAP mapType = D3D11_MAP_READ;
+    UINT mapFlags = D3D11_MAP_FLAG_DO_NOT_WAIT;
+
+    device_context->CopySubresourceRegion(get_staging_texture(), 0,
+                                          0, 0, 0,
+                                          get_texture(), get_subresource(),
+                                          nullptr);
+    HRESULT err = S_OK;
+    D3D11_MAPPED_SUBRESOURCE lockedRect {};
+    do {
+        err = device_context->Map(get_staging_texture(), 0, mapType, mapFlags, &lockedRect);
+        if (S_OK != err && DXGI_ERROR_WAS_STILL_DRAWING != err) {
+            GAPI_LOG_WARNING(nullptr, "Cannot Map staging texture in device context, error: " << std::to_string(HRESULT_CODE(err)));
+            return ;
+        }
+    } while (DXGI_ERROR_WAS_STILL_DRAWING == err);
+
+    if (FAILED(err)) {
+        GAPI_LOG_WARNING(nullptr, "Cannot lock frame");
+        return ;
+    }
+
+    D3D11_TEXTURE2D_DESC desc {};
+    get_texture()->GetDesc(&desc);
+    switch (desc.Format) {
+        case DXGI_FORMAT_NV12:
+            ptr->Pitch = (mfxU16)lockedRect.RowPitch;
+            ptr->Y     = (mfxU8 *)lockedRect.pData;
+            ptr->UV     = (mfxU8 *)lockedRect.pData + desc.Height * lockedRect.RowPitch;
+
+            GAPI_Assert(ptr->Y && ptr->UV/* && ptr->V */&& "DXGI_FORMAT_NV12 locked frame data is nullptr");
+            break;
+        default:
+            GAPI_LOG_WARNING(nullptr, "Unknown DXGI format: " << desc.Format);
+            return;
+    }
+}
+
+void allocation_data_t::on_last_out_impl(ID3D11DeviceContext* device_context, mfxFrameData *ptr) {
+    device_context->Unmap(get_staging_texture(), 0);
+    if (ptr) {
+        ptr->Pitch = 0;
+        ptr->U = ptr->V = ptr->Y = 0;
+        ptr->A = ptr->R = ptr->G = ptr->B = 0;
+    }
+}
+////////////////////////////////////////////////////////////////////////////////
 
 allocation_record::allocation_record() = default;
 allocation_record::~allocation_record() {
@@ -589,233 +634,7 @@ mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
     }
 
     // Read access is more complex
-    // each `incoming` request must check in before acquire resource
-    size_t thread_id = data->incoming_requests.fetch_add(1);
-    if (thread_id == 0) {
-        /*
-         * only one `incoming` request is allowable to init resource
-         * at first time
-         * let's filter out the first one by `thread_id`
-         *
-         * The first one `incoming` request becomes main `incoming` request
-         */
-        if (data->outgoing_requests.load() == 0) {
-            D3D11_MAP mapType = D3D11_MAP_READ;
-            UINT mapFlags = D3D11_MAP_FLAG_DO_NOT_WAIT;
-
-            device_context->CopySubresourceRegion(data->get_staging_texture(), 0,
-                                                  0, 0, 0,
-                                                  data->get_texture(), data->get_subresource(),
-                                                  nullptr);
-            HRESULT err = S_OK;
-            D3D11_MAPPED_SUBRESOURCE lockedRect {};
-            do {
-                err = device_context->Map(data->get_staging_texture(), 0, mapType, mapFlags, &lockedRect);
-                if (S_OK != err && DXGI_ERROR_WAS_STILL_DRAWING != err) {
-                    GAPI_LOG_WARNING(nullptr, "Cannot Map staging texture in device context, error: " << std::to_string(HRESULT_CODE(err)));
-                    return MFX_ERR_LOCK_MEMORY;
-                }
-            } while (DXGI_ERROR_WAS_STILL_DRAWING == err);
-
-            if (FAILED(err)) {
-                GAPI_LOG_WARNING(nullptr, "Cannot lock frame");
-                return MFX_ERR_LOCK_MEMORY;
-            }
-
-            D3D11_TEXTURE2D_DESC desc {};
-            data->get_texture()->GetDesc(&desc);
-            switch (desc.Format) {
-                case DXGI_FORMAT_NV12:
-                    ptr->Pitch = (mfxU16)lockedRect.RowPitch;
-                    ptr->Y     = (mfxU8 *)lockedRect.pData;
-                    ptr->UV     = (mfxU8 *)lockedRect.pData + desc.Height * lockedRect.RowPitch;
-
-                    GAPI_Assert(ptr->Y && ptr->UV/* && ptr->V */&& "DXGI_FORMAT_NV12 locked frame data is nullptr");
-                    break;
-                default:
-                    GAPI_LOG_WARNING(nullptr, "Unknown DXGI format: " << desc.Format);
-                    return MFX_ERR_LOCK_MEMORY;
-            }
-
-            /*
-             * The main `incoming` request finished resource initialization
-             * and became `outgoing`
-             *
-             * Non empty `outgoing` count means that
-             * other further `incoming` (or busy-wait) requests
-             * are getting on with its job without resource initialization,
-             * because main `incoming` request has already initialized it at here
-             */
-            data->outgoing_requests.fetch_add(1);
-            GAPI_Assert(ptr->Y && (ptr->UV || (ptr->U && ptr->V)) &&
-                        "on_lock: data must be correct after first init");
-            GAPI_LOG_DEBUG(nullptr, "charged, data: " << data);
-            return MFX_ERR_NONE;
-        }
-        GAPI_Assert(false && "Unknown state");
-        return MFX_ERR_NONE;
-    } else {
-        /*
-         * CASE 1)
-         *
-         * busy wait for others `incoming` requests for resource initialization
-         * besides main `incoming` request which are getting on
-         * resource initialization at this point
-         *
-         */
-
-        // OR
-
-        /*
-         * CASE 2)
-         *
-         * busy wait for ALL `incoming` request for resource initialization
-         * including main `incoming` request. It will happen if
-         * new `incoming` requests had came here while resource was getting on deinit
-         * in `on_unlock` in another processing thread.
-         * In this case no actual main `incoming` request is available and
-         * all `incoming` requests must be in busy-wait stare
-         *
-         */
-
-        // Each `incoming` request became `busy-wait` request
-        size_t busy_thread_id = data->pending_requests.fetch_add(1);
-
-        /*
-         * CASE 1)
-         *
-         * Non empty `outgoing` requests count means that other further `incoming` or
-         * `busy-wait` request are getting on with its job
-         * without resource initialization because
-         * main thread has already initialized it at here
-         */
-        while (data->outgoing_requests.load() == 0) {
-
-            // OR
-
-            /*
-             * CASE 2)
-             *
-             * In case of NO master `incoming `request is available and doesn't
-             * provide resource initialization. All `incoming` requests must be in
-             * busy-wait state.
-             * If it is not true then CASE 1) is going on
-             *
-             * OR
-             *
-             * `on_unlock` is in deinitialization phase in another thread.
-             * Both cases mean busy-wait state here
-             */
-            if (data->pending_requests.load() == data->incoming_requests.load()) {
-                /*
-                 * CASE 2) ONLY
-                 *
-                 * It will happen if 'on_unlock` in another thread
-                 * finishes its execution only
-                 *
-                 * `on_unlock` in another thread might finished with either
-                 * deinitialization action or without deinitialization action
-                 * (the call off deinitialization case)
-                 *
-                 * We must not continue at here (without reinit)
-                 * if deinitialization happens in `on_unlock` in another thread.
-                 * So try it on
-                 */
-
-                // only single `busy-wait` request must make sure about possible
-                // deinitialization. So first `busy-wait` request becomes
-                // main `busy-wait` request
-                if (busy_thread_id == 0) {
-                    bool expected_reinit = true;
-                    if (!data->reinit.compare_exchange_strong(expected_reinit, false)) {
-                        /*
-                         * deinitialization called off in `on_unlock`
-                         * because new `incoming` request had appeared at here before
-                         * `on_unlock` started deinit procedure in another thread.
-                         * So no reinit required because no deinit had happended
-                         *
-                         * main `busy-wait` request must break busy-wait state
-                         * and become `outgoing` request.
-                         * Non empty `outgoing` count means that other
-                         * further `incoming` requests or
-                         * `busy-wait` requests are getting on with its job
-                         * without resource initialization/reinitialization
-                         * because no deinit happened in `on_unlock`
-                         * in another thread
-                         */
-                        break; //just quit busy loop
-                    } else {
-                        /* Deinitialization had happened in `on_unlock`
-                         * in another thread right before
-                         * new `incoming` requests appeared.
-                         * So main `busy-wait` request must start reinit procedure
-                         */
-                        D3D11_MAP mapType = D3D11_MAP_READ;
-                        UINT mapFlags = D3D11_MAP_FLAG_DO_NOT_WAIT;
-
-                        device_context->CopySubresourceRegion(data->get_staging_texture(), 0,
-                                                              0, 0, 0,
-                                                              data->get_texture(), data->get_subresource(),
-                                                              nullptr);
-                        HRESULT err = S_OK;
-                        D3D11_MAPPED_SUBRESOURCE lockedRect {};
-                        do {
-                            err = device_context->Map(data->get_staging_texture(), 0, mapType, mapFlags, &lockedRect);
-                            if (S_OK != err && DXGI_ERROR_WAS_STILL_DRAWING != err) {
-                                GAPI_LOG_WARNING(nullptr, "Cannot Map staging texture in device context, error: " << std::to_string(HRESULT_CODE(err)));
-                                return MFX_ERR_LOCK_MEMORY;
-                            }
-                        } while (DXGI_ERROR_WAS_STILL_DRAWING == err);
-
-                        if (FAILED(err)) {
-                            GAPI_LOG_WARNING(nullptr, "Cannot lock frame");
-                            return MFX_ERR_LOCK_MEMORY;
-                        }
-
-                        D3D11_TEXTURE2D_DESC desc {};
-                        data->get_texture()->GetDesc(&desc);
-                        switch (desc.Format) {
-                            case DXGI_FORMAT_NV12:
-                                ptr->Pitch = (mfxU16)lockedRect.RowPitch;
-                                ptr->Y     = (mfxU8 *)lockedRect.pData;
-                                ptr->UV     = (mfxU8 *)lockedRect.pData + desc.Height * lockedRect.RowPitch;
-
-                                GAPI_Assert(ptr->Y && ptr->UV/* && ptr->V */&& "DXGI_FORMAT_NV12 locked frame data is nullptr");
-                                break;
-                            default:
-                                GAPI_LOG_WARNING(nullptr, "Unknown DXGI format: " << desc.Format);
-                                return MFX_ERR_LOCK_MEMORY;
-                        }
-
-                        /*
-                         * Main `busy-wait` request has finished reinit procedure
-                         * and becomes `outgong` request.
-                         * Non empty `outgoing` count means that other
-                         * further `incoming` requests or
-                         * `busy-wait` requests are getting on with its job
-                         * without resource initialization because
-                         * main `busy-wait` request
-                         * has already re-initialized it at here
-                         */
-                        data->outgoing_requests.fetch_add(1);
-                        data->pending_requests.fetch_sub(1);
-                        GAPI_LOG_DEBUG(nullptr, "REcharged, data: " << data);
-                        GAPI_Assert(ptr->Y && (ptr->UV || (ptr->U && ptr->V)) &&
-                                    "on_lock: data must be correct after subsequent reinit");
-                        return MFX_ERR_NONE;
-                    }
-                }
-            }
-        }
-
-
-        // All non main requests became `outgoing` and look at on initialized resource
-        data->outgoing_requests++;
-
-        // Each `busy-wait` request are not busy-wait now
-        data->pending_requests.fetch_sub(1);
-    }
-
+    data->visit_in(device_context, ptr);
     GAPI_Assert(ptr->Y && (ptr->UV || (ptr->U && ptr->V)) &&
                 "on_lock: data must exist for charging `outgoing_requests`");
     return MFX_ERR_NONE;
@@ -851,86 +670,7 @@ mfxStatus VPLDX11AccelerationPolicy::on_unlock(mfxMemId mid, mfxFrameData *ptr) 
     }
 
     // Read unlock
-    /*
-     * Each released `outgoing` request checks out to doesn't use resource anymore.
-     * The last `outgoing` request becomes main `outgoing` request and
-     * must deinitialize resource if no `incoming` or `busy-wait` requests
-     * are waiting for it
-     */
-    size_t thread_id = data->outgoing_requests.fetch_sub(1);
-    if (thread_id == 1) {
-        /*
-         * Make sure that no another `incoming` (including `busy-wait)
-         * exists.
-         * But beforehand its must make sure that no `incoming` or `pending`
-         * requests are exist.
-         *
-         * The main `outgoing` request is an one of `incoming` request
-         * (it is the oldest one in the current `incoming` bunch) and still
-         * holds resource in initialized state (thus we compare with 1).
-         * We must not deinitialize resource before decrease
-         * `incoming` requests counter because
-         * after it has got 0 value in `on_lock` another thread
-         * will start initialize resource procedure which will get conflict
-         * with current deinitialize procedure
-         *
-         * From this point, all `on_lock` request in another thread would
-         * become `busy-wait` without reaching main `incoming` state (CASE 2)
-         * */
-        if (data->incoming_requests.load() == 1) {
-            /*
-            * The main `outgoing` request is ready to deinit shared resource
-            * in unconflicting manner.
-            *
-            * This is a critical section for single thread for main `outgoing`
-            * request
-            *
-            * CASE 2 only available in `on_lock` thread
-            * */
-            device_context->Unmap(data->get_staging_texture(), 0);
-            if (ptr) {
-                ptr->Pitch = 0;
-                ptr->U = ptr->V = ptr->Y = 0;
-                ptr->A = ptr->R = ptr->G = ptr->B = 0;
-            }
-
-            /*
-             * Before main `outgoinq` request become released it must notify
-             * subsequent `busy-wait` requests in `on_lock` in another thread
-             * that main `busy-wait` must start reinit resource procedure
-             * */
-            data->reinit.store(true);
-            GAPI_Assert(!ptr->Y && !(ptr->UV || (ptr->U && ptr->V)) &&
-                        "on_unlock: data must be cleared after last `incoming_requests`");
-
-            /*
-             * Deinitialize procedure is finished and main `outgoing` request
-             * (it is the oldest one in `incoming` request) must become released
-             *
-             * Right after when we decrease `incoming` counter
-             * the condition for equality
-             * `busy-wait` and `incoming` counter will become true (CASE 2 only)
-             * in `on_lock` in another threads. After that
-             * a main `busy-wait` request would check `reinit` condition
-             * */
-            data->incoming_requests.fetch_sub(1);
-
-            GAPI_LOG_DEBUG(nullptr, "UNcharged, data: " << data);
-            return MFX_ERR_NONE;
-        }
-
-        /*
-         * At this point we have guarantee that new `incoming` requests
-         * had became increased in `on_lock` in another thread right before
-         * current thread deinitialize resource.
-         *
-         * So call off deinitialization procedure here
-         * */
-    }
-
-    GAPI_Assert(ptr->Y && (ptr->UV || (ptr->U && ptr->V)) &&
-                "on_unlock: data must exist till last `outgoing_requests`");
-    data->incoming_requests.fetch_sub(1);
+    data->visit_out(device_context, ptr);
     return MFX_ERR_NONE;
 }
 

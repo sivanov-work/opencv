@@ -17,6 +17,7 @@
 #include "streaming/onevpl/accelerators/accel_policy_interface.hpp"
 #include "streaming/onevpl/accelerators/surface/surface_pool.hpp"
 #include "streaming/onevpl/accelerators/surface/shared_lock.hpp"
+#include "streaming/onevpl/accelerators/utils/elastic_barrier.hpp"
 
 #ifdef CPU_ACCEL_ADAPTER
 #include "streaming/onevpl/accelerators/accel_policy_cpu.hpp"
@@ -53,7 +54,8 @@ private:
 };
 
 struct allocation_record;
-struct allocation_data_t : public lockable {
+struct allocation_data_t : public lockable,
+                           public elastic_barrier<allocation_data_t> {
     using subresource_id_t = unsigned int;
 
     allocation_data_t(std::weak_ptr<allocation_record> parent,
@@ -66,17 +68,15 @@ struct allocation_data_t : public lockable {
     ID3D11Texture2D* get_texture();
     ID3D11Texture2D* get_staging_texture();
     allocation_data_t::subresource_id_t get_subresource() const;
+
+    // elastic barrier interface impl
+    void on_first_in_impl(ID3D11DeviceContext* device_context, mfxFrameData *ptr);
+    void on_last_out_impl(ID3D11DeviceContext* device_context, mfxFrameData *ptr);
 private:
     ID3D11Texture2D* texture_ptr = nullptr;
     subresource_id_t subresource_id = 0;
     ID3D11Texture2D* staging_texture_ptr = nullptr;
     std::weak_ptr<allocation_record> observer;
-public:
-    std::atomic<size_t> incoming_requests;
-    std::atomic<size_t> outgoing_requests;
-    std::atomic<size_t> pending_requests;
-
-    std::atomic<bool> reinit;
 };
 
 struct allocation_record : public std::enable_shared_from_this<allocation_record> {
