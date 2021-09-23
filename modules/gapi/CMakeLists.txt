@@ -175,6 +175,9 @@ set(gapi_srcs
     src/streaming/onevpl/accelerators/accel_policy_cpu.cpp
     src/streaming/onevpl/accelerators/accel_policy_dx11.cpp
 
+    src/streaming/onevpl/cfg_param_device_selector.cpp
+    src/streaming/onevpl/device_selector_interface.cpp
+
     # Utils (ITT tracing)
     src/utils/itt.cpp
     )
