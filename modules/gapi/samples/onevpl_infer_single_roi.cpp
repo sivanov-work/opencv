@@ -10,6 +10,8 @@
 #include <opencv2/gapi/infer/ie.hpp>
 #include <opencv2/gapi/render.hpp>
 #include <opencv2/gapi/streaming/onevpl/source.hpp>
+#include <opencv2/gapi/streaming/onevpl/data_provider_interface.hpp>
+#include <opencv2/gapi/streaming/onevpl/device_selector_fabric.hpp>
 #include <opencv2/highgui.hpp> // CommandLineParser
 
 const std::string about =
@@ -196,10 +198,20 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
+    // Create IDeviceSelector to allow configure IE & Source for the same device & context
+    // based on VPL requested config params
+    cv::gapi::wip::onevpl::IDeviceSelector::Ptr selector =
+                    cv::gapi::wip::onevpl::createCfgParamDeviceSelector(source_cfgs);
+    auto dev = selector->select_devices().rbegin()->second;
+
     auto face_net = cv::gapi::ie::Params<custom::FaceDetector> {
         face_model_path,                 // path to topology IR
-        get_weights_path(face_model_path)   // path to weights
+        get_weights_path(face_model_path),   // path to weights
+        dev.get_name()
     };
+
+    face_net.cfgContextCreator(selector);
+
     auto kernels = cv::gapi::kernels
         < custom::OCVLocateROI
         , custom::OCVParseSSD
@@ -209,7 +221,7 @@ int main(int argc, char *argv[]) {
     // Create source
     cv::Ptr<cv::gapi::wip::IStreamSource> cap;
     try {
-        cap = cv::gapi::wip::make_onevpl_src(file_path, source_cfgs);
+        cap = cv::gapi::wip::make_onevpl_src(file_path, source_cfgs, selector);
         std::cout << "oneVPL source desription: " << cap->descr_of() << std::endl;
     } catch (const std::exception& ex) {
         std::cerr << "Cannot create source: " << ex.what() << std::endl;
@@ -217,7 +229,7 @@ int main(int argc, char *argv[]) {
     }
 
     cv::GMetaArg descr = cap->descr_of();
-    auto frame_descr = cv::util::get<cv::GFrameDesc>(descr);
+    auto frame_descr = cv::GFrameDesc {};//cv::util::get<cv::GFrameDesc>(descr);
 
     // Now build the graph
     cv::GFrame in;

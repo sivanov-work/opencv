@@ -72,7 +72,7 @@ static mfxVariant cfg_param_to_mfx_variant(const CfgParam& accel_param) {
 
 CfgParamDeviceSelector::CfgParamDeviceSelector(const CfgParams& cfg_params) :
     IDeviceSelector(),
-    suggested_device(IDeviceSelector::create<Device>(nullptr, AccelType::HOST)),
+    suggested_device(IDeviceSelector::create<Device>(nullptr, "CPU", AccelType::HOST)),
     suggested_context(IDeviceSelector::create<Context>(nullptr, AccelType::HOST)) {
 
     auto accel_mode_it =
@@ -133,7 +133,7 @@ CfgParamDeviceSelector::CfgParamDeviceSelector(const CfgParams& cfg_params) :
                 pD11Multithread->Release();
             }
 
-            suggested_device = IDeviceSelector::create<Device>(hw_handle, AccelType::DX11);
+            suggested_device = IDeviceSelector::create<Device>(hw_handle, "GPU", AccelType::DX11);
             suggested_context = IDeviceSelector::create<Context>(device_context, AccelType::DX11);
 #else
             GAPI_LOG_WARNING(nullptr, "Unavailable \"mfxImplDescription.AccelerationMode: MFX_ACCEL_MODE_VIA_D3D11\""
@@ -155,10 +155,11 @@ CfgParamDeviceSelector::CfgParamDeviceSelector(const CfgParams& cfg_params) :
 }
 
 CfgParamDeviceSelector::CfgParamDeviceSelector(Device::Ptr device_ptr,
+                                               const std::string& device_id,
                                                Context::Ptr ctx_ptr,
                                                const CfgParams& cfg_params) :
     IDeviceSelector(),
-    suggested_device(IDeviceSelector::create<Device>(nullptr, AccelType::HOST)),
+    suggested_device(IDeviceSelector::create<Device>(nullptr, "CPU", AccelType::HOST)),
     suggested_context(IDeviceSelector::create<Context>(nullptr, AccelType::HOST)) {
     auto accel_mode_it =
         std::find_if(cfg_params.begin(), cfg_params.end(), [] (const CfgParam& value) {
@@ -191,7 +192,7 @@ CfgParamDeviceSelector::CfgParamDeviceSelector(Device::Ptr device_ptr,
         case MFX_ACCEL_MODE_VIA_D3D11: {
 #ifdef HAVE_DIRECTX
 #ifdef HAVE_D3D11
-            suggested_device = IDeviceSelector::create<Device>(device_ptr, AccelType::DX11);
+            suggested_device = IDeviceSelector::create<Device>(device_ptr, device_id, AccelType::DX11);
             ID3D11Device* dx_device_ptr =
                 reinterpret_cast<ID3D11Device*>(suggested_device.get_ptr());
             dx_device_ptr->AddRef();
@@ -243,7 +244,9 @@ CfgParamDeviceSelector::~CfgParamDeviceSelector() {
             break;
     }
 
-    GAPI_LOG_INFO(nullptr, "release device: " << suggested_device.get_ptr());
+    GAPI_LOG_INFO(nullptr, "release device by name: " <<
+                           suggested_device.get_name() <<
+                           ", ptr: " << suggested_device.get_ptr());
     AccelType dtype = suggested_device.get_type();
     switch(dtype) {
         case AccelType::HOST:
@@ -268,22 +271,10 @@ CfgParamDeviceSelector::DeviceScoreTable CfgParamDeviceSelector::select_devices(
     return {std::make_pair(Score::Max, suggested_device)};
 }
 
-CfgParamDeviceSelector::DeviceScoreTable CfgParamDeviceSelector::select_spare_devices() const {
-    return {};
+CfgParamDeviceSelector::DeviceContexts CfgParamDeviceSelector::select_context() {
+    return {suggested_context};
 }
 
-Context CfgParamDeviceSelector::select_context(const DeviceScoreTable& selected_devices) {
-    GAPI_Assert(selected_devices.size() == 1 && "Implementation must use only single device");
-    GAPI_Assert(selected_devices.begin()->second.get_ptr() == suggested_device.get_ptr() &&
-                   "Implementation must use suggested device ptr");
-    GAPI_Assert(selected_devices.begin()->second.get_type() == suggested_device.get_type() &&
-                   "Implementation must use suggested device type");
-    return suggested_context;
-}
-
-Context CfgParamDeviceSelector::get_last_context() const {
-    return suggested_context;
-}
 } // namespace onevpl
 } // namespace wip
 } // namespace gapi

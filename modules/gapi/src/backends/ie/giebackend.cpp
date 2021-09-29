@@ -39,6 +39,8 @@
 #include <opencv2/gapi/own/convert.hpp>
 #include <opencv2/gapi/gframe.hpp>
 
+#include <opencv2/gapi/streaming/onevpl/device_selector_interface.hpp>
+
 #include "compiler/gobjref.hpp"
 #include "compiler/gmodel.hpp"
 
@@ -59,6 +61,25 @@ template<typename T> using QueueClass = tbb::concurrent_bounded_queue<T>;
 #  include "executor/conc_queue.hpp"
 template<typename T> using QueueClass = cv::gapi::own::concurrent_bounded_queue<T>;
 #endif // TBB
+
+#ifdef HAVE_DIRECTX
+#ifdef HAVE_D3D11
+#pragma comment(lib,"d3d11.lib")
+#pragma comment(lib, "C:/Program Files (x86)/IntelSWTools/system_studio_2020/OpenCL/sdk/lib/x64/OpenCL.lib")
+// get rid of generate macro max/min/etc from DX side
+#define D3D11_NO_HELPERS
+#define NOMINMAX
+#include <d3d11.h>
+#include <d3d11_4.h>
+#include <codecvt>
+#include "opencv2/core/directx.hpp"
+#undef D3D11_NO_HELPERS
+#undef NOMINMAX
+
+#include <gpu/gpu_context_api_dx.hpp>
+
+#endif // HAVE_D3D11
+#endif // HAVE_DIRECTX
 
 #include "utils/itt.hpp"
 
@@ -228,11 +249,120 @@ struct IEUnit {
 
     explicit IEUnit(const cv::gapi::ie::detail::ParamDesc &pp)
         : params(pp) {
-        InferenceEngine::ParamMap* ctx_params =
-                            cv::util::any_cast<InferenceEngine::ParamMap>(&params.context_config);
-        if (ctx_params != nullptr) {
-            auto ie_core = cv::gimpl::ie::wrap::getCore();
-            rctx = ie_core.CreateContext(params.device_id, *ctx_params);
+
+        {
+            if (params.postponed_ctx_creation) {
+                InferenceEngine::ParamMap* ctx_params =
+                                cv::util::any_cast<InferenceEngine::ParamMap>(&params.context_config);
+                GAPI_Assert(ctx_params && "ctx_param must exist for postponed ctx creation option");
+                GAPI_LOG_INFO(nullptr, "Create IE remote ctx from params");
+                auto ie_core = cv::gimpl::ie::wrap::getCore();
+                rctx = ie_core.CreateContext(params.device_id, *ctx_params);
+            } else if (params.device_selector_ptr) {
+                GAPI_LOG_INFO(nullptr, "Use external IDeviceSelector for customize remote ctx");
+                auto contexts = params.device_selector_ptr->select_context();
+                GAPI_LOG_DEBUG(nullptr, "IDeviceSelector selects countext count: " << contexts.size());
+                GAPI_Assert(!contexts.empty() && "IDeviceSelector must returns one contexts at least");
+
+                // TODO consider IE MultiDevice plugin usage here
+                // Next part implemented in assumption single device plugin available only
+                auto ie_core = cv::gimpl::ie::wrap::getCore();
+
+                auto first_ctx = *contexts.begin();
+                if (!first_ctx.get_ptr()) {
+                    if (first_ctx.get_type() != cv::gapi::wip::onevpl::AccelType::HOST) {
+                        GAPI_LOG_WARNING(nullptr, "Unexpected IDeviceSelector ctx has been got,"
+                                                  " value must be not `nullptr` for AccelType: " <<
+                                                  cv::gapi::wip::onevpl::to_cstring(first_ctx.get_type()));
+                        throw std::runtime_error("Invalid context has been returned by IDeviceSelector");
+                    }
+                    rctx.reset();
+                } else {
+                    if (first_ctx.get_type() == cv::gapi::wip::onevpl::AccelType::HOST) {
+                        GAPI_LOG_WARNING(nullptr, "Unexpected IDeviceSelector ctx has been got,"
+                                                  " value must be `nullptr` for HOST AccelType");
+                        throw std::runtime_error("Invalid HOST context has been returned by IDeviceSelector");
+                    }
+
+                    // TODO IDeviceSelector ctx is unusable for DX11 accoring to IE API
+                    // Use device_ptr instead
+                    auto devs = params.device_selector_ptr->select_devices();
+                    GAPI_Assert(!devs.empty() && "IDeviceSelector must returns one device at least");
+                    auto first_dev = devs.rbegin()->second;
+                    if (first_dev.get_type() != first_ctx.get_type()) {
+                        GAPI_LOG_WARNING(nullptr, "Unexpected IDeviceSelector device & context has been returned,"
+                                                  " device AccelType: " <<
+                                                  cv::gapi::wip::onevpl::to_cstring(first_dev.get_type()) <<
+                                                  ", ctx AccelType: " <<
+                                                  cv::gapi::wip::onevpl::to_cstring(first_ctx.get_type()) <<
+                                                  ". Both must be same");
+                        throw std::runtime_error("Invalid device & contex has been returned by IDeviceSelector");
+                    }
+
+                    if (!first_dev.get_ptr()) {
+                        GAPI_LOG_WARNING(nullptr, "Unexpected IDeviceSelector device has been got,"
+                                                  " value must be not `nullptr` for AccelType: " <<
+                                                  cv::gapi::wip::onevpl::to_cstring(first_dev.get_type()));
+                        throw std::runtime_error("Invalid device has been returned by IDeviceSelector");
+                    }
+
+                    {
+                        std::vector<std::string> available_devices = ie_core.GetAvailableDevices();
+                        GAPI_LOG_DEBUG(nullptr, "IE available devices count: " << available_devices.size());
+
+                        std::stringstream ss;
+                        std::copy(available_devices.begin(), available_devices.end(),
+                                std::ostream_iterator<std::string>(ss, ", "));
+                        GAPI_LOG_DEBUG(nullptr, ss.str());
+                    }
+
+                    // Create ctx
+                    cv::gapi::wip::onevpl::AccelType dtype = first_dev.get_type();
+                    GAPI_LOG_DEBUG(nullptr, "Create IE remote contex by type: " <<
+                                            cv::gapi::wip::onevpl::to_cstring(dtype));
+                    switch(dtype) {
+                        case cv::gapi::wip::onevpl::AccelType::DX11: {
+#ifdef HAVE_DIRECTX
+#ifdef HAVE_D3D11
+                            GAPI_LOG_INFO(nullptr, "Create DX11 IE remote context for device: " << first_dev.get_name() <<
+                                                   ", ptr: " << first_dev.get_ptr());
+                            ID3D11Device* device_ptr = reinterpret_cast<ID3D11Device*>(first_dev.get_ptr());
+
+                            D3D11_BUFFER_DESC descr;
+                            descr.ByteWidth = 1024;
+                            descr.Usage = D3D11_USAGE_DEFAULT;
+                            descr.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+                            descr.CPUAccessFlags = 0;
+                            descr.MiscFlags = 0;
+                            ID3D11Buffer* test_buffer = nullptr;
+                            HRESULT err = device_ptr->CreateBuffer(&descr, nullptr, &test_buffer);
+                            if (FAILED(err)) {
+                                GAPI_LOG_WARNING(nullptr, "Cannot create test buffer for device: " << device_ptr <<
+                                                          ", error: " << std::to_string(HRESULT_CODE(err)));
+                                GAPI_Assert(false && "DX11 Device validation failed");
+                            }
+                            test_buffer->Release();
+
+                            ie_core.SetConfig(params.config, first_dev.get_name());
+                            /*
+                            rctx = InferenceEngine::gpu::make_shared_context(ie_core,
+                                                                             first_dev.get_name(),
+                                                                             device_ptr);
+                            */
+                            rctx = ie_core.GetDefaultContext(first_dev.get_name());
+                            break;
+#endif // HAVE_DIRECTX
+#endif // HAVE_D3D11
+                            // pass through
+                        }
+                        default:
+                            GAPI_LOG_WARNING(nullptr, "Unsupported remote context AccelType: "  <<
+                                                      cv::gapi::wip::onevpl::to_cstring(first_dev.get_type()));
+                            GAPI_Assert(false);
+                            break;
+                    }
+                }
+            }
         }
 
         if (params.kind == cv::gapi::ie::detail::ParamDesc::Kind::Load) {

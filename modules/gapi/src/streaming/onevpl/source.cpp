@@ -5,9 +5,12 @@
 // Copyright (C) 2021 Intel Corporation
 
 #include <opencv2/gapi/streaming/onevpl/source.hpp>
+#include <opencv2/gapi/streaming/onevpl/device_selector_fabric.hpp>
 
 #include "streaming/onevpl/source_priv.hpp"
 #include "streaming/onevpl/file_data_provider.hpp"
+#include "streaming/onevpl/cfg_param_device_selector.hpp"
+
 namespace cv {
 namespace gapi {
 namespace wip {
@@ -16,7 +19,8 @@ namespace onevpl {
 #ifdef HAVE_ONEVPL
 GSource::GSource(const std::string& filePath, const CfgParams& cfg_params) :
     GSource(std::unique_ptr<Priv>(new GSource::Priv(std::make_shared<FileDataProvider>(filePath),
-                                                    cfg_params))) {
+                                                    cfg_params,
+                                                    createCfgParamDeviceSelector(cfg_params)))) {
 
     if (filePath.empty()) {
         util::throw_error(std::logic_error("Cannot create 'GSource' on empty source file name"));
@@ -24,14 +28,42 @@ GSource::GSource(const std::string& filePath, const CfgParams& cfg_params) :
 }
 
 GSource::GSource(std::shared_ptr<IDataProvider> source, const CfgParams& cfg_params) :
-     GSource(std::unique_ptr<Priv>(new GSource::Priv(source, cfg_params))) {
+    GSource(std::unique_ptr<Priv>(new GSource::Priv(source, cfg_params,
+                                                     createCfgParamDeviceSelector(cfg_params)))) {
 }
+
+GSource::GSource(const std::string& filePath,
+                 const CfgParams& cfg_params,
+                 std::shared_ptr<IDeviceSelector> selector) :
+    GSource(std::unique_ptr<Priv>(new GSource::Priv(std::make_shared<FileDataProvider>(filePath),
+                                                    cfg_params,
+                                                    selector))) {
+
+    if (filePath.empty()) {
+        util::throw_error(std::logic_error("Cannot create 'GSource' on empty source file name"));
+    }
+}
+
+GSource::GSource(std::shared_ptr<IDataProvider> source,
+            const CfgParams& cfg_params,
+            std::shared_ptr<IDeviceSelector> selector) :
+    GSource(std::unique_ptr<Priv>(new GSource::Priv(source, cfg_params, selector))) {
+}
+
 #else
 GSource::GSource(const std::string&, const CfgParams&) {
     GAPI_Assert(false && "Unsupported: G-API compiled without `WITH_GAPI_ONEVPL=ON`");
 }
 
 GSource::GSource(std::shared_ptr<IDataProvider>, const CfgParams&) {
+    GAPI_Assert(false && "Unsupported: G-API compiled without `WITH_GAPI_ONEVPL=ON`");
+}
+
+GSource::GSource(const std::string&, const CfgParams&, std::shared_ptr<IDeviceSelector>) {
+    GAPI_Assert(false && "Unsupported: G-API compiled without `WITH_GAPI_ONEVPL=ON`");
+}
+
+GSource::GSource(std::shared_ptr<IDataProvider>, const CfgParams&, std::shared_ptr<IDeviceSelector>) {
     GAPI_Assert(false && "Unsupported: G-API compiled without `WITH_GAPI_ONEVPL=ON`");
 }
 #endif

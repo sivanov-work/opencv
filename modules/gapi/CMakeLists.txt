@@ -177,6 +177,7 @@ set(gapi_srcs
 
     src/streaming/onevpl/cfg_param_device_selector.cpp
     src/streaming/onevpl/device_selector_interface.cpp
+    src/streaming/onevpl/device_selector_fabric.cpp
 
     # Utils (ITT tracing)
     src/utils/itt.cpp

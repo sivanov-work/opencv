@@ -21,6 +21,8 @@
 #include <opencv2/gapi/gkernel.hpp> // GKernelPackage
 #include <opencv2/gapi/infer.hpp>   // Generic
 
+#include <opencv2/gapi/streaming/onevpl/device_selector_interface.hpp>
+
 namespace cv {
 namespace gapi {
 // FIXME: introduce a new sub-namespace for NN?
@@ -79,6 +81,9 @@ struct ParamDesc {
 
     // NB: An optional config to setup RemoteContext for IE
     cv::util::any context_config;
+    bool postponed_ctx_creation {};
+
+    std::shared_ptr<cv::gapi::wip::onevpl::IDeviceSelector> device_selector_ptr;
 };
 } // namespace detail
 
@@ -227,13 +232,18 @@ public:
 
     When RemoteContext is configured the backend imports the networks using the context.
     It also expects cv::MediaFrames to be actually remote, to operate with blobs via the context.
+    Mutually exclusive with @ref cfgContextCreator and throws error
+    in case of IDeviceSelector has assigned
 
     @param ctx_cfg cv::util::any value which holds InferenceEngine::ParamMap.
     @return reference to this parameter structure.
     */
     Params& cfgContextParams(const cv::util::any& ctx_cfg) {
+        if (desc.device_selector_ptr) {
+            throw std::logic_error("`IDeviceSelector` has been set already");
+        }
         desc.context_config = ctx_cfg;
-        return *this;
+        desc.postponed_ctx_creation = true;
     }
 
     /** @overload
@@ -243,7 +253,30 @@ public:
     @return reference to this parameter structure.
     */
     Params& cfgContextParams(cv::util::any&& ctx_cfg) {
-        desc.context_config = std::move(ctx_cfg);
+        if (desc.device_selector_ptr) {
+            throw std::logic_error("`IDeviceSelector` has been set already");
+        }
+        desc.context_config = ctx_cfg;
+        desc.postponed_ctx_creation = true;
+    }
+
+
+    /** @brief Specifies `IDeviceSelector` in InferenceEngine.
+
+    When IDeviceSelector is configured the backend imports the networks using contexts
+    and devices provided by existing IDeviceSelector implementation.
+    It also expects cv::MediaFrames to be actually remote, to operate with blobs via the context.
+    Mutually exclusive with @ref cfgContextParams and throws error
+    in case of application request postponed context creation from config
+
+    @param creator IDeviceSelector::Ptr value which holds interface implementation.
+    @return reference to this parameter structure.
+    */
+    Params& cfgContextCreator(wip::onevpl::IDeviceSelector::Ptr creator) {
+        if (desc.postponed_ctx_creation) {
+             throw std::logic_error("`cfgContextParams` has been set already");
+        }
+        desc.device_selector_ptr = creator;
         return *this;
     }
 

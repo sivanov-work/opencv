@@ -39,8 +39,10 @@ GSource::Priv::Priv() :
     description_is_valid = false;
 }
 
-GSource::Priv::Priv(std::shared_ptr<IDataProvider>, const std::vector<CfgParam>&) :
-    GSource::Priv()
+GSource::Priv::Priv(std::shared_ptr<IDataProvider>,
+                    const std::vector<CfgParam>&,
+                    std::shared_ptr<IDeviceSelector>) :
+     GSource::Priv()
 {
 }
 
