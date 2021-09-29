@@ -65,7 +65,8 @@ template<typename T> using QueueClass = cv::gapi::own::concurrent_bounded_queue<
 #ifdef HAVE_DIRECTX
 #ifdef HAVE_D3D11
 #pragma comment(lib,"d3d11.lib")
-#pragma comment(lib, "C:/Program Files (x86)/IntelSWTools/system_studio_2020/OpenCL/sdk/lib/x64/OpenCL.lib")
+//#pragma comment(lib, "C:/Program Files (x86)/IntelSWTools/system_studio_2020/OpenCL/sdk/lib/x64/OpenCL.lib")
+
 // get rid of generate macro max/min/etc from DX side
 #define D3D11_NO_HELPERS
 #define NOMINMAX
@@ -344,12 +345,12 @@ struct IEUnit {
                             test_buffer->Release();
 
                             ie_core.SetConfig(params.config, first_dev.get_name());
-                            /*
+
                             rctx = InferenceEngine::gpu::make_shared_context(ie_core,
                                                                              first_dev.get_name(),
                                                                              device_ptr);
-                            */
-                            rctx = ie_core.GetDefaultContext(first_dev.get_name());
+
+                            //rctx = ie_core.GetDefaultContext(first_dev.get_name());
                             break;
 #endif // HAVE_DIRECTX
 #endif // HAVE_D3D11
