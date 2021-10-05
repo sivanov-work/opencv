@@ -281,3 +281,11 @@ endif()
 
 ocv_add_perf_tests()
 ocv_add_samples()
+
+
+# Required for sample with inference on host
+if (TARGET example_gapi_onevpl_infer_single_roi)
+  if(OPENCV_GAPI_INF_ENGINE)
+    ocv_target_link_libraries(example_gapi_onevpl_infer_single_roi PRIVATE ${INF_ENGINE_TARGET})
+  endif()
+endif()

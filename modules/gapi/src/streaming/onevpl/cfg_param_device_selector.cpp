@@ -20,6 +20,8 @@
 #define NOMINMAX
 #include <d3d11.h>
 #include <d3d11_4.h>
+#pragma comment(lib, "dxgi")
+
 #include <codecvt>
 #include "opencv2/core/directx.hpp"
 #ifdef HAVE_OPENCL
@@ -108,10 +110,28 @@ CfgParamDeviceSelector::CfgParamDeviceSelector(const CfgParams& cfg_params) :
                                                 };
             D3D_FEATURE_LEVEL featureLevel;
 
+UINT i = 0;
+IDXGIFactory * pFactory;
+HRESULT hr = CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)(&pFactory) );
+
+IDXGIAdapter * pAdapter = nullptr;
+std::vector <IDXGIAdapter*> vAdapters;
+while(pFactory->EnumAdapters(i, &pAdapter) != DXGI_ERROR_NOT_FOUND)
+{
+    DXGI_ADAPTER_DESC  desc{};
+    pAdapter->GetDesc(&desc);
+    GAPI_LOG_INFO(nullptr, "Adapter num: " << i << ", Descr: "<< desc.Description);
+    std::wcout << desc.Description << std::endl;
+    vAdapters.push_back(pAdapter);
+    pAdapter->AddRef();
+    ++i;
+}
+
+
             // Create the Direct3D 11 API device object and a corresponding context.
             HRESULT err = D3D11CreateDevice(
-                    nullptr, // Specify nullptr to use the default adapter.
-                    D3D_DRIVER_TYPE_HARDWARE,
+                    vAdapters[0], // Specify nullptr to use the default adapter.
+                    D3D_DRIVER_TYPE_UNKNOWN,
                     nullptr,
                     creationFlags, // Set set debug and Direct2D compatibility flags.
                     featureLevels, // List of feature levels this app can support.

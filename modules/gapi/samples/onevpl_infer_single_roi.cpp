@@ -14,6 +14,8 @@
 #include <opencv2/gapi/streaming/onevpl/device_selector_fabric.hpp>
 #include <opencv2/highgui.hpp> // CommandLineParser
 
+#include <inference_engine.hpp> // ParamMap
+
 const std::string about =
     "This is an OpenCV-based version of oneVPLSource decoder example";
 const std::string keys =
@@ -204,13 +206,17 @@ int main(int argc, char *argv[]) {
                     cv::gapi::wip::onevpl::createCfgParamDeviceSelector(source_cfgs);
     auto dev = selector->select_devices().rbegin()->second;
 
+    InferenceEngine::ParamMap ctx_config({{"CONTEXT_TYPE", "VA_SHARED"},
+                                          {"VA_DEVICE", dev.get_ptr()} });
+
     auto face_net = cv::gapi::ie::Params<custom::FaceDetector> {
         face_model_path,                 // path to topology IR
         get_weights_path(face_model_path),   // path to weights
         dev.get_name()
     };
 
-    face_net.cfgContextCreator(selector);
+    face_net.cfgContextParams(ctx_config);
+    //face_net.cfgContextCreator(selector);
 
     auto kernels = cv::gapi::kernels
         < custom::OCVLocateROI

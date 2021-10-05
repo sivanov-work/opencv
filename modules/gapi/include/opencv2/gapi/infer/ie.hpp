@@ -244,6 +244,7 @@ public:
         }
         desc.context_config = ctx_cfg;
         desc.postponed_ctx_creation = true;
+        return *this;
     }
 
     /** @overload
@@ -258,6 +259,7 @@ public:
         }
         desc.context_config = ctx_cfg;
         desc.postponed_ctx_creation = true;
+        return *this;
     }
 
 
