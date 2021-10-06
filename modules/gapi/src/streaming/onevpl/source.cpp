@@ -5,7 +5,6 @@
 // Copyright (C) 2021 Intel Corporation
 
 #include <opencv2/gapi/streaming/onevpl/source.hpp>
-#include <opencv2/gapi/streaming/onevpl/device_selector_fabric.hpp>
 
 #include "streaming/onevpl/source_priv.hpp"
 #include "streaming/onevpl/file_data_provider.hpp"
@@ -18,32 +17,47 @@ namespace onevpl {
 
 #ifdef HAVE_ONEVPL
 GSource::GSource(const std::string& filePath, const CfgParams& cfg_params) :
-    GSource(std::unique_ptr<Priv>(new GSource::Priv(std::make_shared<FileDataProvider>(filePath),
-                                                    cfg_params,
-                                                    createCfgParamDeviceSelector(cfg_params)))) {
+    GSource(filePath, cfg_params, std::make_shared<CfgParamDeviceSelector>(cfg_params)) {
+    if (filePath.empty()) {
+        util::throw_error(std::logic_error("Cannot create 'GSource' on empty source file name"));
+    }
+}
 
+GSource::GSource(const std::string& filePath,
+                 const CfgParams& cfg_params,
+                 const std::string& device_id,
+                 void* accel_device_ptr,
+                 void* accel_ctx_ptr) :
+    GSource(filePath, cfg_params,
+            std::make_shared<CfgParamDeviceSelector>(accel_device_ptr, device_id,
+                                                     accel_ctx_ptr, cfg_params)) {
+}
+
+GSource::GSource(const std::string& filePath,
+                 const CfgParams& cfg_params,
+                 std::shared_ptr<IDeviceSelector> selector) :
+    GSource(std::make_shared<FileDataProvider>(filePath), cfg_params, selector) {
     if (filePath.empty()) {
         util::throw_error(std::logic_error("Cannot create 'GSource' on empty source file name"));
     }
 }
 
 GSource::GSource(std::shared_ptr<IDataProvider> source, const CfgParams& cfg_params) :
-    GSource(std::unique_ptr<Priv>(new GSource::Priv(source, cfg_params,
-                                                     createCfgParamDeviceSelector(cfg_params)))) {
+    GSource(source, cfg_params,
+            std::make_shared<CfgParamDeviceSelector>(cfg_params)) {
 }
 
-GSource::GSource(const std::string& filePath,
+GSource::GSource(std::shared_ptr<IDataProvider> source,
                  const CfgParams& cfg_params,
-                 std::shared_ptr<IDeviceSelector> selector) :
-    GSource(std::unique_ptr<Priv>(new GSource::Priv(std::make_shared<FileDataProvider>(filePath),
-                                                    cfg_params,
-                                                    selector))) {
-
-    if (filePath.empty()) {
-        util::throw_error(std::logic_error("Cannot create 'GSource' on empty source file name"));
-    }
+                 const std::string& device_id,
+                 void* accel_device_ptr,
+                 void* accel_ctx_ptr) :
+    GSource(source, cfg_params,
+            std::make_shared<CfgParamDeviceSelector>(accel_device_ptr, device_id,
+                                                     accel_ctx_ptr, cfg_params)) {
 }
 
+// common delegating parameters c-tor
 GSource::GSource(std::shared_ptr<IDataProvider> source,
             const CfgParams& cfg_params,
             std::shared_ptr<IDeviceSelector> selector) :
@@ -68,6 +82,7 @@ GSource::GSource(std::shared_ptr<IDataProvider>, const CfgParams&, std::shared_p
 }
 #endif
 
+// final delegating c-tor
 GSource::GSource(std::unique_ptr<Priv>&& impl) :
     IStreamSource(),
     m_priv(std::move(impl)) {
