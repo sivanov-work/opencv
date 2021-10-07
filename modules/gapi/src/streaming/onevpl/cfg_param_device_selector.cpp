@@ -18,9 +18,12 @@
 // get rid of generate macro max/min/etc from DX side
 #define D3D11_NO_HELPERS
 #define NOMINMAX
+#include <atlbase.h>
 #include <d3d11.h>
 #include <d3d11_4.h>
 #pragma comment(lib, "dxgi")
+#undef D3D11_NO_HELPERS
+#undef NOMINMAX
 
 #include <codecvt>
 #include "opencv2/core/directx.hpp"
@@ -110,37 +113,45 @@ CfgParamDeviceSelector::CfgParamDeviceSelector(const CfgParams& cfg_params) :
                                                 };
             D3D_FEATURE_LEVEL featureLevel;
 
-UINT i = 0;
-IDXGIFactory * pFactory;
-HRESULT hr = CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)(&pFactory) );
+            CComPtr<IDXGIFactory> adapter_factory;
+            CComPtr<IDXGIAdapter> intel_adapters;
+            {
+                IDXGIFactory* out_factory = nullptr;
+                HRESULT err = CreateDXGIFactory(__uuidof(IDXGIFactory),
+                                                reinterpret_cast<void**>(&out_factory));
+                if (FAILED(err)) {
+                    throw std::runtime_error("Cannot create CreateDXGIFactory, error: " + std::to_string(HRESULT_CODE(err)));
+                }
+                adapter_factory.Attach(out_factory);
+            }
 
-IDXGIAdapter * pAdapter = nullptr;
-std::vector <IDXGIAdapter*> vAdapters;
-while(pFactory->EnumAdapters(i, &pAdapter) != DXGI_ERROR_NOT_FOUND)
-{
-    DXGI_ADAPTER_DESC  desc{};
-    pAdapter->GetDesc(&desc);
-    GAPI_LOG_INFO(nullptr, "Adapter num: " << i << ", Descr: "<< desc.Description);
-    std::wcout << desc.Description << std::endl;
-    vAdapters.push_back(pAdapter);
-    pAdapter->AddRef();
-    ++i;
-}
+            CComPtr<IDXGIAdapter> intel_adapter;
+            UINT adapter_index = 0;
+            const unsigned int refIntelVendorID = 0x8086;
+            IDXGIAdapter* out_adapter = nullptr;
 
+            while (adapter_factory->EnumAdapters(adapter_index, &out_adapter) != DXGI_ERROR_NOT_FOUND) {
+                DXGI_ADAPTER_DESC desc{};
+                out_adapter->GetDesc(&desc);
+                if (desc.VendorId == refIntelVendorID) {
+                    intel_adapter.Attach(out_adapter);
+                    break;
+                }
+                ++adapter_index;
+            }
+
+            if (!intel_adapter) {
+                throw std::runtime_error("No Intel GPU adapter on aboard");
+            }
 
             // Create the Direct3D 11 API device object and a corresponding context.
-            HRESULT err = D3D11CreateDevice(
-                    vAdapters[0], // Specify nullptr to use the default adapter.
-                    D3D_DRIVER_TYPE_UNKNOWN,
-                    nullptr,
-                    creationFlags, // Set set debug and Direct2D compatibility flags.
-                    featureLevels, // List of feature levels this app can support.
-                    ARRAYSIZE(featureLevels),
-                    D3D11_SDK_VERSION, // Always set this to D3D11_SDK_VERSION.
-                    &hw_handle, // Returns the Direct3D device created.
-                    &featureLevel, // Returns feature level of device created.
-                    &device_context // Returns the device immediate context.
-                    );
+            HRESULT err = D3D11CreateDevice(intel_adapter,
+                                            D3D_DRIVER_TYPE_UNKNOWN,
+                                            nullptr, creationFlags,
+                                            featureLevels, ARRAYSIZE(featureLevels),
+                                            D3D11_SDK_VERSION,
+                                            &hw_handle, &featureLevel,
+                                            &device_context);
             if(FAILED(err)) {
                 throw std::logic_error("Cannot create D3D11CreateDevice, error: " + std::to_string(HRESULT_CODE(err)));
             }
@@ -299,9 +310,6 @@ CfgParamDeviceSelector::DeviceContexts CfgParamDeviceSelector::select_context() 
 } // namespace wip
 } // namespace gapi
 } // namespace cv
-
-#undef D3D11_NO_HELPERS
-#undef NOMINMAX
 #endif // HAVE_D3D11
 #endif // HAVE_DIRECTX
 #endif // HAVE_ONEVPL
