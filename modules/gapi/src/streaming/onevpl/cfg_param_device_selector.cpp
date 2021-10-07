@@ -168,7 +168,7 @@ CfgParamDeviceSelector::CfgParamDeviceSelector(const CfgParams& cfg_params) :
             suggested_context = IDeviceSelector::create<Context>(device_context, AccelType::DX11);
 #else
             GAPI_LOG_WARNING(nullptr, "Unavailable \"mfxImplDescription.AccelerationMode: MFX_ACCEL_MODE_VIA_D3D11\""
-                                      "was choosed for current project configuration");
+                                      "was chosen for current project configuration");
             throw std::logic_error("Unsupported \"mfxImplDescription.AccelerationMode: MFX_ACCEL_MODE_VIA_D3D11\"");
 #endif // HAVE_DIRECTX
 #endif // HAVE_D3D11
@@ -234,7 +234,7 @@ CfgParamDeviceSelector::CfgParamDeviceSelector(Device::Ptr device_ptr,
             dx_ctx_ptr->AddRef();
 #else
             GAPI_LOG_WARNING(nullptr, "Unavailable \"mfxImplDescription.AccelerationMode: MFX_ACCEL_MODE_VIA_D3D11\""
-                                      "was choosed for current project configuration");
+                                      "was chosen for current project configuration");
             throw std::logic_error("Unsupported \"mfxImplDescription.AccelerationMode: MFX_ACCEL_MODE_VIA_D3D11\"");
 #endif // HAVE_DIRECTX
 #endif // HAVE_D3D11
