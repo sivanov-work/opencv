@@ -16,7 +16,7 @@
 #include <vpl/mfxvideo.h>
 #include "streaming/onevpl/accelerators/accel_policy_interface.hpp"
 #include "streaming/onevpl/accelerators/surface/surface_pool.hpp"
-#include "streaming/onevpl/accelerators/surface/shared_lock.hpp"
+#include "streaming/onevpl/accelerators/utils/shared_lock.hpp"
 #include "streaming/onevpl/accelerators/utils/elastic_barrier.hpp"
 
 #ifdef CPU_ACCEL_ADAPTER

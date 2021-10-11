@@ -4,7 +4,7 @@
 //
 // Copyright (C) 2021 Intel Corporation
 
-#include "streaming/onevpl/accelerators/surface/shared_lock.hpp"
+#include "streaming/onevpl/accelerators/utils/shared_lock.hpp"
 
 
 namespace cv {
@@ -33,7 +33,12 @@ void SharedLock::lock() {
     do {
         // acquire if no readers only
         curr_value = 0;
-    } while (counter.compare_exchange_weak(curr_value, EXCLUSIVE_ACCESS));
+    } while (!counter.compare_exchange_weak(curr_value, EXCLUSIVE_ACCESS));
+}
+
+bool SharedLock::try_lock() {
+    int curr_value = 0;
+    return counter.compare_exchange_strong(curr_value, EXCLUSIVE_ACCESS);
 }
 
 void SharedLock::unlock() {

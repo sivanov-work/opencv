@@ -11,7 +11,7 @@
 #include <opencv2/gapi/media.hpp>
 #include "opencv2/gapi/own/exports.hpp" // GAPI_EXPORTS
 
-#include "streaming/onevpl/accelerators/surface/shared_lock.hpp"
+#include "streaming/onevpl/accelerators/utils/shared_lock.hpp"
 #ifdef HAVE_ONEVPL
 #if (MFX_VERSION >= 2000)
 #include <vpl/mfxdispatcher.h>

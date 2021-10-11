@@ -10,16 +10,14 @@
 #include <atomic>
 #include <memory>
 
+#include "opencv2/gapi/own/exports.hpp" // GAPI_EXPORTS
+
 namespace cv {
 namespace gapi {
 namespace wip {
 
-class SharedLock {
+class GAPI_EXPORTS SharedLock {
 public:
-    enum {
-        EXCLUSIVE_ACCESS = -1
-    };
-
     SharedLock() = default;
     ~SharedLock() = default;
 
@@ -27,10 +25,15 @@ public:
     size_t unlock_shared();
 
     void lock();
+    bool try_lock();
     void unlock();
 
     bool owns() const;
 private:
+    enum {
+        EXCLUSIVE_ACCESS = -1
+    };
+
     SharedLock(const SharedLock&) = delete;
     SharedLock& operator= (const SharedLock&) = delete;
     SharedLock(SharedLock&&) = delete;
