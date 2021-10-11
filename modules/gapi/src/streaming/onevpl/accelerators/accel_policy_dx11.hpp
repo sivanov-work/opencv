@@ -9,8 +9,6 @@
 #include <map>
 
 #include "opencv2/gapi/own/exports.hpp" // GAPI_EXPORTS
-//TODO
-//#define  CPU_ACCEL_ADAPTER
 
 #ifdef HAVE_ONEVPL
 #include <vpl/mfxvideo.h>
@@ -18,10 +16,6 @@
 #include "streaming/onevpl/accelerators/surface/surface_pool.hpp"
 #include "streaming/onevpl/accelerators/utils/shared_lock.hpp"
 #include "streaming/onevpl/accelerators/utils/elastic_barrier.hpp"
-
-#ifdef CPU_ACCEL_ADAPTER
-#include "streaming/onevpl/accelerators/accel_policy_cpu.hpp"
-#endif
 
 #ifdef HAVE_DIRECTX
 #ifdef HAVE_D3D11
@@ -118,7 +112,6 @@ struct GAPI_EXPORTS VPLDX11AccelerationPolicy final: public VPLAccelerationPolic
     AccelType get_accel_type() const override;
     void init(session_t session) override;
     void deinit(session_t session) override;
-    pool_key_t create_surface_pool(size_t pool_size, size_t surface_size_bytes, surface_ptr_ctr_t creator) override;
     pool_key_t create_surface_pool(const mfxFrameAllocRequest& alloc_request, mfxVideoParam& param) override;
     surface_weak_ptr_t get_free_surface(pool_key_t key) override;
     size_t get_free_surface_count(pool_key_t key) const override;
@@ -151,10 +144,6 @@ private:
     std::map<alloc_id_t, allocation_t> allocation_table;
 
     std::map<pool_key_t, pool_t> pool_table;
-
-#ifdef CPU_ACCEL_ADAPTER
-    std::unique_ptr<VPLCPUAccelerationPolicy> adapter;
-#endif
 };
 } // namespace wip
 } // namespace gapi

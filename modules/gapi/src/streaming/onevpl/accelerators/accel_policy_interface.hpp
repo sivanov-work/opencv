@@ -48,7 +48,6 @@ struct VPLAccelerationPolicy
     // for existing workspace in existing pool (see realloc)
     // thus it is not implemented,
     // PLEASE provide initial memory area large enough
-    virtual pool_key_t create_surface_pool(size_t pool_size, size_t surface_size_bytes, surface_ptr_ctr_t creator) = 0;
     virtual pool_key_t create_surface_pool(const mfxFrameAllocRequest& alloc_request, mfxVideoParam& param) = 0;
 
     virtual surface_weak_ptr_t get_free_surface(pool_key_t key) = 0;

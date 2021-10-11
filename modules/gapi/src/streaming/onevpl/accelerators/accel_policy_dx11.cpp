@@ -216,10 +216,6 @@ VPLDX11AccelerationPolicy::VPLDX11AccelerationPolicy() :
     allocator.GetHDL = get_hdl_cb;
     allocator.Free = free_cb;
     allocator.pthis = this;
-
-#ifdef CPU_ACCEL_ADAPTER
-    adapter.reset(new VPLCPUAccelerationPolicy);
-#endif
 }
 
 VPLDX11AccelerationPolicy::~VPLDX11AccelerationPolicy()
@@ -315,20 +311,6 @@ void VPLDX11AccelerationPolicy::deinit(session_t session) {
 }
 
 VPLDX11AccelerationPolicy::pool_key_t
-VPLDX11AccelerationPolicy::create_surface_pool(size_t pool_size, size_t surface_size_bytes,
-                                               surface_ptr_ctr_t creator) {
-    GAPI_LOG_DEBUG(nullptr, "pool size: " << pool_size << ", surface size bytes: " << surface_size_bytes);
-
-#ifdef CPU_ACCEL_ADAPTER
-    return adapter->create_surface_pool(pool_size, surface_size_bytes, creator);
-#endif
-    (void)pool_size;
-    (void)surface_size_bytes;
-    (void)creator;
-    throw std::runtime_error("VPLDX11AccelerationPolicy::create_surface_pool() is not implemented");
-}
-
-VPLDX11AccelerationPolicy::pool_key_t
 VPLDX11AccelerationPolicy::create_surface_pool(const mfxFrameAllocRequest& alloc_req,
                                                mfxVideoParam& param) {
 
@@ -380,9 +362,6 @@ VPLDX11AccelerationPolicy::create_surface_pool(const mfxFrameAllocRequest& alloc
 
 VPLDX11AccelerationPolicy::surface_weak_ptr_t VPLDX11AccelerationPolicy::get_free_surface(pool_key_t key)
 {
-#ifdef CPU_ACCEL_ADAPTER
-    return adapter->get_free_surface(key);
-#else
     auto pool_it = pool_table.find(key);
     if (pool_it == pool_table.end()) {
         std::stringstream ss;
@@ -394,31 +373,19 @@ VPLDX11AccelerationPolicy::surface_weak_ptr_t VPLDX11AccelerationPolicy::get_fre
 
     pool_t& requested_pool = pool_it->second;
     return requested_pool.find_free();
-#endif
 }
 
 size_t VPLDX11AccelerationPolicy::get_free_surface_count(pool_key_t key) const {
-#ifdef CPU_ACCEL_ADAPTER
-    return adapter->get_free_surface_count(key);
-#endif
-    (void)key;
-    throw std::runtime_error("get_free_surface_count() is not implemented");
+    GAPI_Assert(false && "get_free_surface_count() is not implemented");
 }
 
 size_t VPLDX11AccelerationPolicy::get_surface_count(pool_key_t key) const {
-#ifdef CPU_ACCEL_ADAPTER
-    return adapter->get_surface_count(key);
-#endif
-    (void)key;
-    throw std::runtime_error("VPLDX11AccelerationPolicy::get_surface_count() is not implemented");
+    GAPI_Assert(false && "VPLDX11AccelerationPolicy::get_surface_count() is not implemented");
 }
 
 cv::MediaFrame::AdapterPtr VPLDX11AccelerationPolicy::create_frame_adapter(pool_key_t key,
                                                                            mfxFrameSurface1* surface) {
 
-#ifdef CPU_ACCEL_ADAPTER
-    return adapter->create_frame_adapter(key, surface);
-#endif
     auto pool_it = pool_table.find(key);
     if (pool_it == pool_table.end()) {
         std::stringstream ss;
