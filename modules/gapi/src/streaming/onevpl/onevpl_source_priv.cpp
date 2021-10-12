@@ -73,6 +73,7 @@ OneVPLSource::Priv::Priv(std::shared_ptr<IDataProvider> provider, const std::vec
         this->mfx_handle_configs.resize(cfg_params.size());
 
         // Set handle config params
+        GAPI_LOG_INFO(nullptr, "Creating VPL config from input params");
         auto cfg_param_it = cfg_params.begin();
         for (mfxConfig& cfg_inst : mfx_handle_configs) {
             cfg_inst = MFXCreateConfig(mfx_handle);
@@ -85,6 +86,7 @@ OneVPLSource::Priv::Priv(std::shared_ptr<IDataProvider> provider, const std::vec
                 ++cfg_param_it;
                 continue;
             }
+            GAPI_LOG_DEBUG(nullptr, "Apply major param: " << cfg_param_it->get_name());
             mfxVariant mfx_param = cfg_param_to_mfx_variant(*cfg_param_it);
             mfxStatus sts = MFXSetConfigFilterProperty(cfg_inst,
                                                        (mfxU8 *)cfg_param_it->get_name().c_str(),
