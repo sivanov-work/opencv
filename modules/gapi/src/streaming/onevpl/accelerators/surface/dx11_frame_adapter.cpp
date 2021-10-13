@@ -5,7 +5,7 @@
 // Copyright (C) 2021 Intel Corporation
 
 #include "streaming/onevpl/accelerators/surface/dx11_frame_adapter.hpp"
-#include "streaming/onevpl/accelerators/accel_policy_dx11.hpp"
+#include "streaming/onevpl/accelerators/dx11_alloc_resource.hpp"
 #include "streaming/onevpl/accelerators/surface/surface.hpp"
 #include "logger.hpp"
 
@@ -33,8 +33,8 @@ VPLMediaFrameDX11Adapter::VPLMediaFrameDX11Adapter(std::shared_ptr<Surface> surf
     const Surface::info_t& info = parent_surface_ptr->get_info();
     Surface::data_t& data = parent_surface_ptr->get_data();
 
-    lockable* alloc_data = reinterpret_cast<lockable*>(data.MemId);
-    alloc_data->set_locable_impl(this);
+    LockAdapter* alloc_data = reinterpret_cast<LockAdapter*>(data.MemId);
+    alloc_data->set_adaptee(this);
 
     GAPI_LOG_DEBUG(nullptr, "surface: " << parent_surface_ptr->get_handle() <<
                             ", w: " << info.Width << ", h: " << info.Height <<
@@ -47,8 +47,8 @@ VPLMediaFrameDX11Adapter::~VPLMediaFrameDX11Adapter() {
     // The last VPLMediaFrameDX11Adapter releases shared Surface pointer
     // The last surface pointer releases workspace memory
     Surface::data_t& data = parent_surface_ptr->get_data();
-    lockable* alloc_data = reinterpret_cast<lockable*>(data.MemId);
-    alloc_data->set_locable_impl(nullptr);
+    LockAdapter* alloc_data = reinterpret_cast<LockAdapter*>(data.MemId);
+    alloc_data->set_adaptee(nullptr);
 
     parent_surface_ptr->release_lock();
 }
@@ -81,7 +81,7 @@ MediaFrame::View VPLMediaFrameDX11Adapter::access(MediaFrame::Access mode) {
                             ", frame: " << this);
 
     // lock MT
-    lockable* alloc_data = reinterpret_cast<lockable *>(data.MemId);
+    LockAdapter* alloc_data = reinterpret_cast<LockAdapter *>(data.MemId);
     if (mode == MediaFrame::Access::R) {
         alloc_data->read_lock();
     } else {
@@ -139,7 +139,7 @@ MediaFrame::View VPLMediaFrameDX11Adapter::access(MediaFrame::Access mode) {
                                         ", frame: " << this_ptr_copy);
                 allocator_copy.Unlock(allocator_copy.pthis, data.MemId, &data);
 
-                lockable* alloc_data = reinterpret_cast<lockable*>(data.MemId);
+                LockAdapter* alloc_data = reinterpret_cast<LockAdapter*>(data.MemId);
                 if (mode == MediaFrame::Access::R) {
                     alloc_data->unlock_read();
                 } else {
@@ -176,7 +176,7 @@ MediaFrame::View VPLMediaFrameDX11Adapter::access(MediaFrame::Access mode) {
                 GAPI_LOG_DEBUG(nullptr, "START unlock frame in surface: " << parent_surface_ptr_copy->get_handle() <<
                                         ", frame: " << this_ptr_copy);
                 allocator_copy.Unlock(allocator_copy.pthis, data.MemId, &data);
-                lockable* alloc_data = reinterpret_cast<lockable*>(data.MemId);
+                LockAdapter* alloc_data = reinterpret_cast<LockAdapter*>(data.MemId);
                 if (mode == MediaFrame::Access::R) {
                     alloc_data->unlock_read();
                 } else {

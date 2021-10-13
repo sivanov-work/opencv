@@ -183,6 +183,7 @@ if(HAVE_GAPI_ONEVPL)
         src/streaming/onevpl/accelerators/utils/shared_lock.cpp
         src/streaming/onevpl/accelerators/accel_policy_cpu.cpp
         src/streaming/onevpl/accelerators/accel_policy_dx11.cpp
+        src/streaming/onevpl/accelerators/dx11_alloc_resource.cpp
 
         src/streaming/onevpl/engine/engine_session.cpp
         src/streaming/onevpl/engine/processing_engine_base.cpp

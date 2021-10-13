@@ -14,8 +14,7 @@
 #include <vpl/mfxvideo.h>
 #include "streaming/onevpl/accelerators/accel_policy_interface.hpp"
 #include "streaming/onevpl/accelerators/surface/surface_pool.hpp"
-#include "streaming/onevpl/accelerators/utils/shared_lock.hpp"
-#include "streaming/onevpl/accelerators/utils/elastic_barrier.hpp"
+#include "streaming/onevpl/accelerators/dx11_alloc_resource.hpp"
 
 #ifdef HAVE_DIRECTX
 #ifdef HAVE_D3D11
@@ -31,75 +30,6 @@
 namespace cv {
 namespace gapi {
 namespace wip {
-
-
-struct lockable {
-    size_t read_lock();
-    size_t unlock_read();
-
-    void write_lock();
-    bool is_write_acquired();
-    void unlock_write();
-
-    SharedLock* set_locable_impl(SharedLock* new_impl);
-    SharedLock* get_locable_impl();
-private:
-    SharedLock* impl = nullptr;
-};
-
-struct allocation_record;
-struct allocation_data_t : public lockable,
-                           public elastic_barrier<allocation_data_t> {
-    using subresource_id_t = unsigned int;
-
-    allocation_data_t(std::weak_ptr<allocation_record> parent,
-                      ID3D11Texture2D* texture_ptr,
-                      subresource_id_t subresource_id,
-                      ID3D11Texture2D* staging_tex_ptr);
-    ~allocation_data_t();
-
-    void release();
-    ID3D11Texture2D* get_texture();
-    ID3D11Texture2D* get_staging_texture();
-    allocation_data_t::subresource_id_t get_subresource() const;
-
-    // elastic barrier interface impl
-    void on_first_in_impl(ID3D11DeviceContext* device_context, mfxFrameData *ptr);
-    void on_last_out_impl(ID3D11DeviceContext* device_context, mfxFrameData *ptr);
-private:
-    ID3D11Texture2D* texture_ptr = nullptr;
-    subresource_id_t subresource_id = 0;
-    ID3D11Texture2D* staging_texture_ptr = nullptr;
-    std::weak_ptr<allocation_record> observer;
-};
-
-struct allocation_record : public std::enable_shared_from_this<allocation_record> {
-
-    using Ptr = std::shared_ptr<allocation_record>;
-
-    ~allocation_record();
-
-    template<typename... Args>
-    static Ptr create(Args&& ...args) {
-        std::shared_ptr<allocation_record> record(new allocation_record);
-        record->init(std::forward<Args>(args)...);
-        return record;
-    }
-
-    Ptr get_ptr();
-
-    using AllocationId = allocation_data_t*;
-    AllocationId* data();
-private:
-    allocation_record();
-    void init(unsigned int items, ID3D11Texture2D* texture, std::vector<ID3D11Texture2D*> &&staging_textures);
-
-    std::vector<AllocationId> resources;
-    ID3D11Texture2D* texture_ptr = nullptr;
-};
-
-
-
 
 struct GAPI_EXPORTS VPLDX11AccelerationPolicy final: public VPLAccelerationPolicy
 {
@@ -140,7 +70,7 @@ private:
     virtual mfxStatus on_free(mfxFrameAllocResponse *response);
 
     using alloc_id_t = mfxU32;
-    using allocation_t = std::shared_ptr<allocation_record>;
+    using allocation_t = std::shared_ptr<DX11AllocationRecord>;
     std::map<alloc_id_t, allocation_t> allocation_table;
 
     std::map<pool_key_t, pool_t> pool_table;
