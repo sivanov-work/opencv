@@ -19,7 +19,6 @@ Surface::Surface(std::unique_ptr<handle_t>&& surf, std::shared_ptr<void> associa
     mirrored_locked_count() {
 
     GAPI_Assert(mfx_surface && "Surface is nullptr");
-    mirrored_locked_count.store(mfx_surface->Data.Locked);
     GAPI_LOG_DEBUG(nullptr, "create surface: " << mfx_surface <<
                             ", locked count: " << mfx_surface->Data.Locked);
 }
@@ -58,8 +57,6 @@ size_t Surface::get_locks_count() const {
 
 size_t Surface::obtain_lock() {
     size_t locked_count = mirrored_locked_count.fetch_add(1);
-    GAPI_Assert(locked_count < std::numeric_limits<mfxU16>::max() &&
-                "Too many references ");
     GAPI_LOG_DEBUG(nullptr, "surface: " << mfx_surface.get() <<
                             ", locked times: " << locked_count + 1);
     return locked_count; // return preceding value
@@ -67,8 +64,6 @@ size_t Surface::obtain_lock() {
 
 size_t Surface::release_lock() {
     size_t locked_count = mirrored_locked_count.fetch_sub(1);
-    GAPI_Assert(locked_count < std::numeric_limits<mfxU16>::max() &&
-                "Too many references ");
     GAPI_Assert(locked_count && "Surface lock counter is invalid");
     GAPI_LOG_DEBUG(nullptr, "surface: " << mfx_surface.get() <<
                             ", locked times: " << locked_count - 1);
