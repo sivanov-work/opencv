@@ -281,7 +281,7 @@ cv::gimpl::GCompiler::GCompiler(const cv::GComputation &c,
     if (dump_path.has_value())
     {
         m_e.addPass("exec", "dump_dot", std::bind(passes::dumpGraph, _1,
-                                                  "my_roi.dot"));
+                                                  dump_path.value()));
     }
 
     // FIXME: This should be called for "ActiveBackends" only (see metadata).

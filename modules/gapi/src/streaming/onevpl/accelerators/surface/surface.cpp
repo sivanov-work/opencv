@@ -26,7 +26,8 @@ Surface::Surface(std::unique_ptr<handle_t>&& surf, std::shared_ptr<void> associa
 
 Surface::~Surface() {
     GAPI_LOG_DEBUG(nullptr, "destroy surface: " << mfx_surface <<
-                            ", worspace memory counter: " << workspace_memory_ptr.use_count());
+                            ", worspace memory counter: " <<
+                            workspace_memory_ptr.use_count());
 }
 
 std::shared_ptr<Surface> Surface::create_surface(std::unique_ptr<handle_t>&& surf,
@@ -57,8 +58,8 @@ size_t Surface::get_locks_count() const {
 
 size_t Surface::obtain_lock() {
     size_t locked_count = mirrored_locked_count.fetch_add(1);
-    GAPI_Assert(locked_count < std::numeric_limits<mfxU16>::max() && "Too many references ");
-    //mfx_surface->Data.Locked = static_cast<mfxU16>(locked_count + 1);
+    GAPI_Assert(locked_count < std::numeric_limits<mfxU16>::max() &&
+                "Too many references ");
     GAPI_LOG_DEBUG(nullptr, "surface: " << mfx_surface.get() <<
                             ", locked times: " << locked_count + 1);
     return locked_count; // return preceding value
@@ -66,9 +67,9 @@ size_t Surface::obtain_lock() {
 
 size_t Surface::release_lock() {
     size_t locked_count = mirrored_locked_count.fetch_sub(1);
-    GAPI_Assert(locked_count < std::numeric_limits<mfxU16>::max() && "Too many references ");
+    GAPI_Assert(locked_count < std::numeric_limits<mfxU16>::max() &&
+                "Too many references ");
     GAPI_Assert(locked_count && "Surface lock counter is invalid");
-    //mfx_surface->Data.Locked = static_cast<mfxU16>(locked_count - 1);
     GAPI_LOG_DEBUG(nullptr, "surface: " << mfx_surface.get() <<
                             ", locked times: " << locked_count - 1);
     return locked_count; // return preceding value

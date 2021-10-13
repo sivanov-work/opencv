@@ -521,7 +521,6 @@ inline IE::Blob::Ptr extractBlob(IECallContext& ctx, std::size_t i) {
 
     switch (ctx.inShape(i)) {
         case cv::GShape::GFRAME: {
-//            GAPI_LOG_WARNING(nullptr, "-S- ACCESS");
             const auto& frame = ctx.inFrame(i);
             ctx.views.emplace_back(new cv::MediaFrame::View(frame.access(cv::MediaFrame::Access::R)));
             return wrapIE(*(ctx.views.back()), frame.desc());

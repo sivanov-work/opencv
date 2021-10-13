@@ -122,7 +122,6 @@ GAPI_OCV_KERNEL_ST(RenderFrameOCVImpl, cv::gapi::wip::draw::GRenderFrame, Render
                     cv::MediaFrame & out,
                     RenderOCVState & state)
     {
-//        GAPI_LOG_WARNING(nullptr, "-S- ACCESS");
         GAPI_Assert(in.desc().fmt == cv::MediaFormat::NV12);
 
         // FIXME: consider a better approach (aka native inplace operation)

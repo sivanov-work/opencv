@@ -252,7 +252,6 @@ struct GOCVBGR: public cv::detail::KernelTag
 
 void GOCVBGR::Actor::extractRMat(const cv::MediaFrame& frame, cv::RMat& rmat)
 {
-//    GAPI_LOG_WARNING(nullptr, "-S- ACCESS");
     const auto& desc = frame.desc();
     switch (desc.fmt)
     {
