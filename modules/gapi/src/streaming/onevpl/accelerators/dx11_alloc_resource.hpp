@@ -46,7 +46,7 @@ private:
 
 struct DX11AllocationRecord;
 struct DX11AllocationItem : public LockAdapter,
-                           public elastic_barrier<DX11AllocationItem> {
+                            public elastic_barrier<DX11AllocationItem> {
     using subresource_id_t = unsigned int;
 
     DX11AllocationItem(std::weak_ptr<DX11AllocationRecord> parent,

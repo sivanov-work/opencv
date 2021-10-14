@@ -63,9 +63,9 @@ SharedLock* LockAdapter::get_adaptee() {
 }
 
 DX11AllocationItem::DX11AllocationItem(std::weak_ptr<DX11AllocationRecord> parent,
-                                     ID3D11Texture2D* tex_ptr,
-                                     subresource_id_t subtex_id,
-                                     ID3D11Texture2D* staging_tex_ptr) :
+                                       ID3D11Texture2D* tex_ptr,
+                                       subresource_id_t subtex_id,
+                                       ID3D11Texture2D* staging_tex_ptr) :
     texture_ptr(tex_ptr),
     subresource_id(subtex_id),
     staging_texture_ptr(staging_tex_ptr),
@@ -128,12 +128,13 @@ void DX11AllocationItem::on_first_in_impl(ID3D11DeviceContext* device_context, m
         err = device_context->Map(get_staging_texture(), 0, mapType, mapFlags, &lockedRect);
         if (S_OK != err && DXGI_ERROR_WAS_STILL_DRAWING != err) {
             GAPI_LOG_WARNING(nullptr, "Cannot Map staging texture in device context, error: " << std::to_string(HRESULT_CODE(err)));
-            return ;
+            GAPI_Assert(false && "Cannot Map staging texture in device context");
         }
     } while (DXGI_ERROR_WAS_STILL_DRAWING == err);
 
     if (FAILED(err)) {
         GAPI_LOG_WARNING(nullptr, "Cannot lock frame");
+        GAPI_Assert(false && "Cannot lock frame");
         return ;
     }
 
