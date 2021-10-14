@@ -42,13 +42,14 @@ struct GAPI_EXPORTS VPLDX11AccelerationPolicy final: public VPLAccelerationPolic
     AccelType get_accel_type() const override;
     void init(session_t session) override;
     void deinit(session_t session) override;
-    pool_key_t create_surface_pool(const mfxFrameAllocRequest& alloc_request, mfxVideoParam& param) override;
+    pool_key_t create_surface_pool(const mfxFrameAllocRequest& alloc_request,
+                                   mfxVideoParam& param) override;
     surface_weak_ptr_t get_free_surface(pool_key_t key) override;
     size_t get_free_surface_count(pool_key_t key) const override;
     size_t get_surface_count(pool_key_t key) const override;
 
     cv::MediaFrame::AdapterPtr create_frame_adapter(pool_key_t key,
-                                                                 mfxFrameSurface1* surface) override;
+                                                    mfxFrameSurface1* surface) override;
 
 private:
     ID3D11Device *hw_handle;
@@ -63,7 +64,8 @@ private:
     static mfxStatus MFX_CDECL get_hdl_cb(mfxHDL pthis, mfxMemId mid, mfxHDL *handle);
     static mfxStatus MFX_CDECL free_cb(mfxHDL pthis, mfxFrameAllocResponse *response);
 
-    virtual mfxStatus on_alloc(const mfxFrameAllocRequest *request, mfxFrameAllocResponse *response);
+    virtual mfxStatus on_alloc(const mfxFrameAllocRequest *request,
+                               mfxFrameAllocResponse *response);
     static mfxStatus on_lock(mfxMemId mid, mfxFrameData *ptr);
     static mfxStatus on_unlock(mfxMemId mid, mfxFrameData *ptr);
     virtual mfxStatus on_get_hdl(mfxMemId mid, mfxHDL *handle);

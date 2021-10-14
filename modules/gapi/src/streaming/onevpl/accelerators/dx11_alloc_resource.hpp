@@ -51,7 +51,7 @@ struct DX11AllocationItem : public LockAdapter,
                             public elastic_barrier<DX11AllocationItem> {
     using subresource_id_t = unsigned int;
 
-    friend class DX11AllocationRecord;
+    friend struct DX11AllocationRecord;
     ~DX11AllocationItem();
 
     void release();
@@ -60,10 +60,15 @@ struct DX11AllocationItem : public LockAdapter,
     DX11AllocationItem::subresource_id_t get_subresource() const;
 
     CComPtr<ID3D11DeviceContext> get_device_ctx();
+    mfxFrameAllocator get_allocator();
 
     // elastic barrier interface impl
     void on_first_in_impl(mfxFrameData *ptr);
     void on_last_out_impl(mfxFrameData *ptr);
+
+    // public transactional access to resources
+    mfxStatus acquire_access(mfxFrameData *ptr);
+    mfxStatus release_access(mfxFrameData *ptr);
 private:
     DX11AllocationItem(std::weak_ptr<DX11AllocationRecord> parent,
                        CComPtr<ID3D11DeviceContext> origin_ctx,
@@ -71,6 +76,11 @@ private:
                        CComPtr<ID3D11Texture2D> texture_ptr,
                        subresource_id_t subresource_id,
                        CComPtr<ID3D11Texture2D> staging_tex_ptr);
+
+    mfxStatus shared_access_acquire_unsafe(mfxFrameData *ptr);
+    mfxStatus shared_access_release_unsafe(mfxFrameData *ptr);
+    mfxStatus exclusive_access_acquire_unsafe(mfxFrameData *ptr);
+    mfxStatus exclusive_access_release_unsafe(mfxFrameData *ptr);
 
     CComPtr<ID3D11DeviceContext> shared_device_context;
     mfxFrameAllocator shared_allocator_copy;

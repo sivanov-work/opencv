@@ -111,6 +111,10 @@ CComPtr<ID3D11DeviceContext> DX11AllocationItem::get_device_ctx() {
     return shared_device_context;
 }
 
+mfxFrameAllocator DX11AllocationItem::get_allocator() {
+    return shared_allocator_copy;
+}
+
 void DX11AllocationItem::on_first_in_impl(mfxFrameData *ptr) {
     D3D11_MAP mapType = D3D11_MAP_READ;
     UINT mapFlags = D3D11_MAP_FLAG_DO_NOT_WAIT;
@@ -158,6 +162,118 @@ void DX11AllocationItem::on_last_out_impl(mfxFrameData *ptr) {
         ptr->U = ptr->V = ptr->Y = 0;
         ptr->A = ptr->R = ptr->G = ptr->B = 0;
     }
+}
+
+mfxStatus DX11AllocationItem::acquire_access(mfxFrameData *ptr) {
+    if (is_write_acquired()) {
+        return exclusive_access_acquire_unsafe(ptr);
+    }
+    return shared_access_acquire_unsafe(ptr);
+}
+
+mfxStatus DX11AllocationItem::release_access(mfxFrameData *ptr) {
+    if (is_write_acquired()) {
+        return exclusive_access_release_unsafe(ptr);
+    }
+    return shared_access_release_unsafe(ptr);
+}
+
+mfxStatus DX11AllocationItem::shared_access_acquire_unsafe(mfxFrameData *ptr) {
+    GAPI_LOG_DEBUG(nullptr, "acquire READ lock: " << this);
+    GAPI_LOG_DEBUG(nullptr, "texture: " << get_texture() <<
+                            ", sub id: " << get_subresource());
+    // shared access requires elastic barrier
+    // first-in visited thread uses resource mapping on host memory
+    // subsequent threads reuses mapped memory
+    //
+    // exclusive access is prohibited while any one shared access has been obtained
+    visit_in(ptr);
+
+    if (!(ptr->Y && (ptr->UV || (ptr->U && ptr->V)))) {
+        GAPI_LOG_WARNING(nullptr, "No any data obtained: " << this);
+        return MFX_ERR_LOCK_MEMORY;
+    }
+    GAPI_LOG_DEBUG(nullptr, "READ access granted: " << this);
+    return MFX_ERR_NONE;
+}
+
+mfxStatus DX11AllocationItem::shared_access_release_unsafe(mfxFrameData *ptr) {
+    GAPI_LOG_DEBUG(nullptr, "releasing READ lock: " << this);
+    GAPI_LOG_DEBUG(nullptr, "texture: " << get_texture() <<
+                            ", sub id: " << get_subresource());
+    // releasing shared access requires elastic barrier
+    // last-out thread must make memory unmapping then and only then no more
+    // read access is coming. If another read-access goes into critical section
+    // (or waiting for acees) we must drop off unmapping procedure
+    visit_out(ptr);
+
+    GAPI_LOG_DEBUG(nullptr, "access on READ released: " << this);
+    return MFX_ERR_NONE;
+}
+
+mfxStatus DX11AllocationItem::exclusive_access_acquire_unsafe(mfxFrameData *ptr) {
+    GAPI_LOG_DEBUG(nullptr, "acquire WRITE lock: " << this);
+    GAPI_LOG_DEBUG(nullptr, "texture: " << get_texture() <<
+                            ", sub id: " << get_subresource());
+    D3D11_MAP mapType = D3D11_MAP_WRITE;
+    UINT mapFlags = D3D11_MAP_FLAG_DO_NOT_WAIT;
+
+    HRESULT err = S_OK;
+    D3D11_MAPPED_SUBRESOURCE lockedRect {};
+    do {
+        err = get_device_ctx()->Map(get_staging_texture(), 0, mapType, mapFlags, &lockedRect);
+        if (S_OK != err && DXGI_ERROR_WAS_STILL_DRAWING != err) {
+            GAPI_LOG_WARNING(nullptr, "Cannot Map staging texture in device context, error: " << std::to_string(HRESULT_CODE(err)));
+            return MFX_ERR_LOCK_MEMORY;
+        }
+    } while (DXGI_ERROR_WAS_STILL_DRAWING == err);
+
+    if (FAILED(err)) {
+        GAPI_LOG_WARNING(nullptr, "Cannot lock frame");
+        return MFX_ERR_LOCK_MEMORY;
+    }
+
+    D3D11_TEXTURE2D_DESC desc {};
+    get_texture()->GetDesc(&desc);
+    switch (desc.Format) {
+        case DXGI_FORMAT_NV12:
+            ptr->Pitch = (mfxU16)lockedRect.RowPitch;
+            ptr->Y = (mfxU8 *)lockedRect.pData;
+            ptr->UV = (mfxU8 *)lockedRect.pData + desc.Height * lockedRect.RowPitch;
+            if (!ptr->Y || !ptr->UV) {
+                GAPI_LOG_WARNING(nullptr, "DXGI_FORMAT_NV12 locked frame data is nullptr");
+                return MFX_ERR_LOCK_MEMORY;
+            }
+            break;
+        default:
+            GAPI_LOG_WARNING(nullptr, "Unknown DXGI format: " << desc.Format);
+            return MFX_ERR_LOCK_MEMORY;
+    }
+
+    GAPI_LOG_DEBUG(nullptr, "WRITE access granted: " << this);
+    return MFX_ERR_NONE;
+}
+
+mfxStatus DX11AllocationItem::exclusive_access_release_unsafe(mfxFrameData *ptr) {
+    GAPI_LOG_DEBUG(nullptr, "releasing WRITE lock: " << this);
+    GAPI_LOG_DEBUG(nullptr, "texture: " << get_texture() <<
+                            ", sub id: " << get_subresource());
+
+    get_device_ctx()->Unmap(get_staging_texture(), 0);
+
+    get_device_ctx()->CopySubresourceRegion(get_texture(),
+                                            get_subresource(),
+                                            0, 0, 0,
+                                            get_staging_texture(), 0,
+                                            nullptr);
+
+    if (ptr) {
+        ptr->Pitch = 0;
+        ptr->U = ptr->V = ptr->Y = 0;
+        ptr->A = ptr->R = ptr->G = ptr->B = 0;
+    }
+    GAPI_LOG_DEBUG(nullptr, "access on WRITE released: " << this);
+    return MFX_ERR_NONE;
 }
 
 DX11AllocationRecord::DX11AllocationRecord() = default;

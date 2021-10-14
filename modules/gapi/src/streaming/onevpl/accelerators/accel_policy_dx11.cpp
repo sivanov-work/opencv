@@ -393,87 +393,16 @@ mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
         return MFX_ERR_LOCK_MEMORY;
     }
 
-    GAPI_LOG_DEBUG(nullptr, "texture : " << data->get_texture() << ", sub id: " << data->get_subresource());
-
-    // check lock type: write lock is quite simple
-    if (data->is_write_acquired()) {
-        GAPI_LOG_DEBUG(nullptr, "try obtain WRITE lock on data: " << data);
-        D3D11_MAP mapType = D3D11_MAP_WRITE;
-        UINT mapFlags = D3D11_MAP_FLAG_DO_NOT_WAIT;
-
-        HRESULT err = S_OK;
-        D3D11_MAPPED_SUBRESOURCE lockedRect {};
-        do {
-            err = data->get_device_ctx()->Map(data->get_staging_texture(), 0, mapType, mapFlags, &lockedRect);
-            if (S_OK != err && DXGI_ERROR_WAS_STILL_DRAWING != err) {
-                GAPI_LOG_WARNING(nullptr, "Cannot Map staging texture in device context, error: " << std::to_string(HRESULT_CODE(err)));
-                return MFX_ERR_LOCK_MEMORY;
-            }
-        } while (DXGI_ERROR_WAS_STILL_DRAWING == err);
-
-        if (FAILED(err)) {
-            GAPI_LOG_WARNING(nullptr, "Cannot lock frame");
-            return MFX_ERR_LOCK_MEMORY;
-        }
-
-        D3D11_TEXTURE2D_DESC desc {};
-        data->get_texture()->GetDesc(&desc);
-        switch (desc.Format) {
-            case DXGI_FORMAT_NV12:
-                ptr->Pitch = (mfxU16)lockedRect.RowPitch;
-                ptr->Y     = (mfxU8 *)lockedRect.pData;
-                ptr->UV     = (mfxU8 *)lockedRect.pData + desc.Height * lockedRect.RowPitch;
-
-                GAPI_Assert(ptr->Y && ptr->UV/* && ptr->V */&& "DXGI_FORMAT_NV12 locked frame data is nullptr");
-                break;
-            default:
-                GAPI_LOG_WARNING(nullptr, "Unknown DXGI format: " << desc.Format);
-                return MFX_ERR_LOCK_MEMORY;
-        }
-
-        GAPI_LOG_DEBUG(nullptr, "WRITE access granted to data: " << data);
-        return MFX_ERR_NONE;
-    }
-
-    // Read access is more complex
-    data->visit_in(ptr);
-    GAPI_Assert(ptr->Y && (ptr->UV || (ptr->U && ptr->V)) &&
-                "on_lock: data must exist for charging `outgoing_requests`");
-    return MFX_ERR_NONE;
+    return data->acquire_access(ptr);
 }
 
 mfxStatus VPLDX11AccelerationPolicy::on_unlock(mfxMemId mid, mfxFrameData *ptr) {
-
     DX11AllocationRecord::AllocationId data = reinterpret_cast<DX11AllocationRecord::AllocationId>(mid);
     if (!data) {
         return MFX_ERR_LOCK_MEMORY;
     }
 
-    GAPI_LOG_DEBUG(nullptr, "texture: " << data->get_texture() << ", sub id: " << data->get_subresource());
-
-    // check unlock type: write un lock is quite simple
-    if (data->is_write_acquired()) {
-        GAPI_LOG_DEBUG(nullptr, "try obtain WRITE unlock on data: " << data);
-        data->get_device_ctx()->Unmap(data->get_staging_texture(), 0);
-
-        data->get_device_ctx()->CopySubresourceRegion(data->get_texture(),
-                                                      data->get_subresource(),
-                                                      0, 0, 0,
-                                                      data->get_staging_texture(), 0,
-                                                      nullptr);
-
-
-        if (ptr) {
-            ptr->Pitch = 0;
-            ptr->U = ptr->V = ptr->Y = 0;
-            ptr->A = ptr->R = ptr->G = ptr->B = 0;
-        }
-        return MFX_ERR_NONE;
-    }
-
-    // Read unlock
-    data->visit_out(ptr);
-    return MFX_ERR_NONE;
+    return data->release_access(ptr);
 }
 
 mfxStatus VPLDX11AccelerationPolicy::on_get_hdl(mfxMemId mid, mfxHDL *handle) {
