@@ -4,6 +4,7 @@
 #include <map>
 
 #include "opencv2/gapi/own/exports.hpp" // GAPI_EXPORTS
+#include <opencv2/gapi/util/compiler_hints.hpp>
 
 #ifdef HAVE_ONEVPL
 #include <vpl/mfxvideo.h>
@@ -15,6 +16,7 @@
 
 #define D3D11_NO_HELPERS
 #define NOMINMAX
+#include <atlbase.h>
 #include <d3d11.h>
 #include <d3d11_4.h>
 #include <codecvt>
@@ -49,24 +51,33 @@ struct DX11AllocationItem : public LockAdapter,
                             public elastic_barrier<DX11AllocationItem> {
     using subresource_id_t = unsigned int;
 
-    DX11AllocationItem(std::weak_ptr<DX11AllocationRecord> parent,
-                      ID3D11Texture2D* texture_ptr,
-                      subresource_id_t subresource_id,
-                      ID3D11Texture2D* staging_tex_ptr);
+    friend class DX11AllocationRecord;
     ~DX11AllocationItem();
 
     void release();
-    ID3D11Texture2D* get_texture();
-    ID3D11Texture2D* get_staging_texture();
+    CComPtr<ID3D11Texture2D> get_texture();
+    CComPtr<ID3D11Texture2D> get_staging_texture();
     DX11AllocationItem::subresource_id_t get_subresource() const;
 
+    CComPtr<ID3D11DeviceContext> get_device_ctx();
+
     // elastic barrier interface impl
-    void on_first_in_impl(ID3D11DeviceContext* device_context, mfxFrameData *ptr);
-    void on_last_out_impl(ID3D11DeviceContext* device_context, mfxFrameData *ptr);
+    void on_first_in_impl(mfxFrameData *ptr);
+    void on_last_out_impl(mfxFrameData *ptr);
 private:
-    ID3D11Texture2D* texture_ptr = nullptr;
+    DX11AllocationItem(std::weak_ptr<DX11AllocationRecord> parent,
+                       CComPtr<ID3D11DeviceContext> origin_ctx,
+                       mfxFrameAllocator origin_allocator,
+                       CComPtr<ID3D11Texture2D> texture_ptr,
+                       subresource_id_t subresource_id,
+                       CComPtr<ID3D11Texture2D> staging_tex_ptr);
+
+    CComPtr<ID3D11DeviceContext> shared_device_context;
+    mfxFrameAllocator shared_allocator_copy;
+
+    CComPtr<ID3D11Texture2D> texture_ptr;
     subresource_id_t subresource_id = 0;
-    ID3D11Texture2D* staging_texture_ptr = nullptr;
+    CComPtr<ID3D11Texture2D> staging_texture_ptr;
     std::weak_ptr<DX11AllocationRecord> observer;
 };
 
@@ -91,7 +102,9 @@ struct DX11AllocationRecord : public std::enable_shared_from_this<DX11Allocation
     AllocationId* data();
 private:
     DX11AllocationRecord();
-    void init(unsigned int items, ID3D11Texture2D* texture, std::vector<ID3D11Texture2D*> &&staging_textures);
+    void init(unsigned int items, CComPtr<ID3D11DeviceContext> origin_ctx,
+              mfxFrameAllocator origin_allocator,
+              ID3D11Texture2D* texture, std::vector<ID3D11Texture2D*> &&staging_textures);
 
     std::vector<AllocationId> resources;
     ID3D11Texture2D* texture_ptr = nullptr;

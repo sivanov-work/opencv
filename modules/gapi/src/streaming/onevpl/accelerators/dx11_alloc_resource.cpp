@@ -63,23 +63,23 @@ SharedLock* LockAdapter::get_adaptee() {
 }
 
 DX11AllocationItem::DX11AllocationItem(std::weak_ptr<DX11AllocationRecord> parent,
-                                       ID3D11Texture2D* tex_ptr,
+                                       CComPtr<ID3D11DeviceContext> origin_ctx,
+                                       mfxFrameAllocator origin_allocator,
+                                       CComPtr<ID3D11Texture2D> tex_ptr,
                                        subresource_id_t subtex_id,
-                                       ID3D11Texture2D* staging_tex_ptr) :
+                                       CComPtr<ID3D11Texture2D> staging_tex_ptr) :
+    shared_device_context(origin_ctx),
+    shared_allocator_copy(origin_allocator),
     texture_ptr(tex_ptr),
     subresource_id(subtex_id),
     staging_texture_ptr(staging_tex_ptr),
     observer(parent) {
-
-    GAPI_DbgAssert(texture_ptr && "Cannot create DX11AllocationItem for empty texture");
-    GAPI_DbgAssert(staging_tex_ptr && "Cannot create DX11AllocationItem for empty staging texture");
-    GAPI_DbgAssert(observer.lock() && "Cannot create DX11AllocationItem for empty parent");
-
-    // increase reference counter, cause DX11AllocationItem shares ownership
-    texture_ptr->AddRef();
-
-    // no need to increase reference to staging_tex_ptr, because
-    // DX11AllocationItem owns it in exclusive way and receive ownership
+    GAPI_DbgAssert(texture_ptr &&
+                   "Cannot create DX11AllocationItem for empty texture");
+    GAPI_DbgAssert(staging_tex_ptr &&
+                   "Cannot create DX11AllocationItem for empty staging texture");
+    GAPI_DbgAssert(observer.lock() &&
+                   "Cannot create DX11AllocationItem for empty parent");
 }
 
 DX11AllocationItem::~DX11AllocationItem() {
@@ -88,25 +88,18 @@ DX11AllocationItem::~DX11AllocationItem() {
 }
 
 void DX11AllocationItem::release() {
+    auto parent = observer.lock();
     GAPI_LOG_DEBUG(nullptr, "texture: " << texture_ptr <<
                             ", subresource id: " << subresource_id <<
-                            ", parent: " << observer.lock().get());
-    if(texture_ptr) {
-        texture_ptr->Release();
-        texture_ptr = nullptr;
-    }
-
-    if(staging_texture_ptr) {
-        staging_texture_ptr->Release();
-        staging_texture_ptr = nullptr;
-    }
+                            ", parent: " << parent.get());
+    cv::util::suppress_unused_warning(parent);
 }
 
-ID3D11Texture2D* DX11AllocationItem::get_texture() {
+CComPtr<ID3D11Texture2D> DX11AllocationItem::get_texture() {
     return texture_ptr;
 }
 
-ID3D11Texture2D* DX11AllocationItem::get_staging_texture() {
+CComPtr<ID3D11Texture2D> DX11AllocationItem::get_staging_texture() {
     return staging_texture_ptr;
 }
 
@@ -114,18 +107,22 @@ DX11AllocationItem::subresource_id_t DX11AllocationItem::get_subresource() const
     return subresource_id;
 }
 
-void DX11AllocationItem::on_first_in_impl(ID3D11DeviceContext* device_context, mfxFrameData *ptr) {
+CComPtr<ID3D11DeviceContext> DX11AllocationItem::get_device_ctx() {
+    return shared_device_context;
+}
+
+void DX11AllocationItem::on_first_in_impl(mfxFrameData *ptr) {
     D3D11_MAP mapType = D3D11_MAP_READ;
     UINT mapFlags = D3D11_MAP_FLAG_DO_NOT_WAIT;
 
-    device_context->CopySubresourceRegion(get_staging_texture(), 0,
+    shared_device_context->CopySubresourceRegion(get_staging_texture(), 0,
                                           0, 0, 0,
                                           get_texture(), get_subresource(),
                                           nullptr);
     HRESULT err = S_OK;
     D3D11_MAPPED_SUBRESOURCE lockedRect {};
     do {
-        err = device_context->Map(get_staging_texture(), 0, mapType, mapFlags, &lockedRect);
+        err = shared_device_context->Map(get_staging_texture(), 0, mapType, mapFlags, &lockedRect);
         if (S_OK != err && DXGI_ERROR_WAS_STILL_DRAWING != err) {
             GAPI_LOG_WARNING(nullptr, "Cannot Map staging texture in device context, error: " << std::to_string(HRESULT_CODE(err)));
             GAPI_Assert(false && "Cannot Map staging texture in device context");
@@ -154,8 +151,8 @@ void DX11AllocationItem::on_first_in_impl(ID3D11DeviceContext* device_context, m
     }
 }
 
-void DX11AllocationItem::on_last_out_impl(ID3D11DeviceContext* device_context, mfxFrameData *ptr) {
-    device_context->Unmap(get_staging_texture(), 0);
+void DX11AllocationItem::on_last_out_impl(mfxFrameData *ptr) {
+    shared_device_context->Unmap(get_staging_texture(), 0);
     if (ptr) {
         ptr->Pitch = 0;
         ptr->U = ptr->V = ptr->Y = 0;
@@ -180,16 +177,31 @@ DX11AllocationRecord::~DX11AllocationRecord() {
     }
 }
 
-void DX11AllocationRecord::init(unsigned int items, ID3D11Texture2D* texture,
-                             std::vector<ID3D11Texture2D*> &&staging_textures) {
+void DX11AllocationRecord::init(unsigned int items,
+                                CComPtr<ID3D11DeviceContext> origin_ctx,
+                                mfxFrameAllocator origin_allocator,
+                                ID3D11Texture2D* texture,
+                                std::vector<ID3D11Texture2D*> &&staging_textures) {
     GAPI_DbgAssert(items != 0 && "Cannot create DX11AllocationRecord with empty items");
     GAPI_DbgAssert(items == staging_textures.size() && "Allocation items count and staging size are not equal");
+    GAPI_DbgAssert(origin_ctx &&
+                   "Cannot create DX11AllocationItem for empty origin_ctx");
+    auto shared_allocator_copy = origin_allocator;
+    GAPI_DbgAssert((shared_allocator_copy.Lock && shared_allocator_copy.Unlock) &&
+                   "Cannot create DX11AllocationItem for empty origin allocator");
+
+    // abandon unusable c-allocator interfaces
+    shared_allocator_copy.Alloc = nullptr;
+    shared_allocator_copy.Free = nullptr;
+    shared_allocator_copy.pthis = nullptr;
+
 
     GAPI_LOG_DEBUG(nullptr, "subresources count: " << items << ", text: " << texture)
     resources.reserve(items);
     texture_ptr = texture; // no AddRef here, because DX11AllocationRecord receive ownership it here
     for(unsigned int i = 0; i < items; i++ ) {
-        resources.emplace_back(new DX11AllocationItem(get_ptr(), texture, i, staging_textures[i]));
+        resources.emplace_back(new DX11AllocationItem(get_ptr(), origin_ctx, shared_allocator_copy,
+                                                      texture, i, staging_textures[i]));
     }
 }
 

@@ -5,8 +5,9 @@
 // Copyright (C) 2021 Intel Corporation
 
 #ifdef HAVE_ONEVPL
+#include <opencv2/gapi/util/compiler_hints.hpp>
+
 #include "streaming/onevpl/accelerators/accel_policy_dx11.hpp"
-//#include "streaming/vpl/vpl_utils.hpp"
 #include "streaming/onevpl/accelerators/surface/cpu_frame_adapter.hpp"
 #include "streaming/onevpl/accelerators/surface/dx11_frame_adapter.hpp"
 #include "streaming/onevpl/accelerators/surface/surface.hpp"
@@ -202,11 +203,11 @@ VPLDX11AccelerationPolicy::surface_weak_ptr_t VPLDX11AccelerationPolicy::get_fre
     return requested_pool.find_free();
 }
 
-size_t VPLDX11AccelerationPolicy::get_free_surface_count(pool_key_t key) const {
+size_t VPLDX11AccelerationPolicy::get_free_surface_count(pool_key_t) const {
     GAPI_Assert(false && "get_free_surface_count() is not implemented");
 }
 
-size_t VPLDX11AccelerationPolicy::get_surface_count(pool_key_t key) const {
+size_t VPLDX11AccelerationPolicy::get_surface_count(pool_key_t) const {
     GAPI_Assert(false && "VPLDX11AccelerationPolicy::get_surface_count() is not implemented");
 }
 
@@ -245,7 +246,9 @@ mfxStatus VPLDX11AccelerationPolicy::lock_cb(mfxHDL pthis, mfxMemId mid, mfxFram
     }
 
     VPLDX11AccelerationPolicy *self = static_cast<VPLDX11AccelerationPolicy *>(pthis);
-    return self->on_lock(mid, ptr);
+    GAPI_LOG_DEBUG(nullptr, "called from: " << self ? "Policy" : "Resource");
+    cv::util::suppress_unused_warning(self);
+    return on_lock(mid, ptr);
 }
 
 mfxStatus VPLDX11AccelerationPolicy::unlock_cb(mfxHDL pthis, mfxMemId mid, mfxFrameData *ptr) {
@@ -254,7 +257,9 @@ mfxStatus VPLDX11AccelerationPolicy::unlock_cb(mfxHDL pthis, mfxMemId mid, mfxFr
     }
 
     VPLDX11AccelerationPolicy *self = static_cast<VPLDX11AccelerationPolicy *>(pthis);
-    return self->on_unlock(mid, ptr);
+    GAPI_LOG_DEBUG(nullptr, "called from: " << self ? "Policy" : "Resource");
+    cv::util::suppress_unused_warning(self);
+    return on_unlock(mid, ptr);
 }
 
 mfxStatus VPLDX11AccelerationPolicy::get_hdl_cb(mfxHDL pthis, mfxMemId mid, mfxHDL *handle) {
@@ -351,10 +356,13 @@ mfxStatus VPLDX11AccelerationPolicy::on_alloc(const mfxFrameAllocRequest *reques
     auto cand_resource_it = allocation_table.end();
     {
         // insert into global table
-        auto inserted_it = allocation_table.emplace(request->AllocId,
-                                                    DX11AllocationRecord::create(request->NumFrameSuggested,
-                                                                              pTexture2D,
-                                                                              std::move(staging_textures)));
+        auto inserted_it =
+                allocation_table.emplace(request->AllocId,
+                                         DX11AllocationRecord::create(request->NumFrameSuggested,
+                                                                      device_context,
+                                                                      allocator,
+                                                                      pTexture2D,
+                                                                      std::move(staging_textures)));
         if (!inserted_it.second) {
             GAPI_LOG_WARNING(nullptr, "Cannot assign allocation by id: " + std::to_string(request->AllocId) +
                                     " - aldeady exist. Total allocation size: " + std::to_string(allocation_table.size()));
@@ -396,7 +404,7 @@ mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
         HRESULT err = S_OK;
         D3D11_MAPPED_SUBRESOURCE lockedRect {};
         do {
-            err = device_context->Map(data->get_staging_texture(), 0, mapType, mapFlags, &lockedRect);
+            err = data->get_device_ctx()->Map(data->get_staging_texture(), 0, mapType, mapFlags, &lockedRect);
             if (S_OK != err && DXGI_ERROR_WAS_STILL_DRAWING != err) {
                 GAPI_LOG_WARNING(nullptr, "Cannot Map staging texture in device context, error: " << std::to_string(HRESULT_CODE(err)));
                 return MFX_ERR_LOCK_MEMORY;
@@ -428,7 +436,7 @@ mfxStatus VPLDX11AccelerationPolicy::on_lock(mfxMemId mid, mfxFrameData *ptr) {
     }
 
     // Read access is more complex
-    data->visit_in(device_context, ptr);
+    data->visit_in(ptr);
     GAPI_Assert(ptr->Y && (ptr->UV || (ptr->U && ptr->V)) &&
                 "on_lock: data must exist for charging `outgoing_requests`");
     return MFX_ERR_NONE;
@@ -446,13 +454,13 @@ mfxStatus VPLDX11AccelerationPolicy::on_unlock(mfxMemId mid, mfxFrameData *ptr) 
     // check unlock type: write un lock is quite simple
     if (data->is_write_acquired()) {
         GAPI_LOG_DEBUG(nullptr, "try obtain WRITE unlock on data: " << data);
-        device_context->Unmap(data->get_staging_texture(), 0);
+        data->get_device_ctx()->Unmap(data->get_staging_texture(), 0);
 
-        device_context->CopySubresourceRegion(data->get_texture(),
-                                              data->get_subresource(),
-                                              0, 0, 0,
-                                              data->get_staging_texture(), 0,
-                                              nullptr);
+        data->get_device_ctx()->CopySubresourceRegion(data->get_texture(),
+                                                      data->get_subresource(),
+                                                      0, 0, 0,
+                                                      data->get_staging_texture(), 0,
+                                                      nullptr);
 
 
         if (ptr) {
@@ -464,7 +472,7 @@ mfxStatus VPLDX11AccelerationPolicy::on_unlock(mfxMemId mid, mfxFrameData *ptr) 
     }
 
     // Read unlock
-    data->visit_out(device_context, ptr);
+    data->visit_out(ptr);
     return MFX_ERR_NONE;
 }
 

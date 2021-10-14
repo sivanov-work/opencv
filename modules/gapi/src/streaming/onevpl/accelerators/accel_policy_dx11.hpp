@@ -64,8 +64,8 @@ private:
     static mfxStatus MFX_CDECL free_cb(mfxHDL pthis, mfxFrameAllocResponse *response);
 
     virtual mfxStatus on_alloc(const mfxFrameAllocRequest *request, mfxFrameAllocResponse *response);
-    virtual mfxStatus on_lock(mfxMemId mid, mfxFrameData *ptr);
-    virtual mfxStatus on_unlock(mfxMemId mid, mfxFrameData *ptr);
+    static mfxStatus on_lock(mfxMemId mid, mfxFrameData *ptr);
+    static mfxStatus on_unlock(mfxMemId mid, mfxFrameData *ptr);
     virtual mfxStatus on_get_hdl(mfxMemId mid, mfxHDL *handle);
     virtual mfxStatus on_free(mfxFrameAllocResponse *response);
 
