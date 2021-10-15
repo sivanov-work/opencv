@@ -32,6 +32,8 @@
 #include "streaming/onevpl/accelerators/surface/cpu_frame_adapter.hpp"
 #include "streaming/onevpl/accelerators/accel_policy_cpu.hpp"
 #include "streaming/onevpl/accelerators/accel_policy_dx11.hpp"
+#include "streaming/onevpl/accelerators/dx11_alloc_resource.hpp"
+#include "streaming/onevpl/accelerators/utils/shared_lock.hpp"
 #include <opencv2/gapi/streaming/onevpl/onevpl_data_provider_interface.hpp>
 #include "streaming/onevpl/engine/processing_engine_base.hpp"
 #include "streaming/onevpl/engine/engine_session.hpp"
@@ -106,6 +108,58 @@ struct TestProcessingEngine: public cv::gapi::wip::ProcessingEngineBase {
         return register_session<TestProcessingSession>(mfx_session);
     }
 };
+
+template <class LockProcessor, class UnlockProcessor>
+class TestLockableAllocator {
+public :
+    using self_t = TestLockableAllocator<LockProcessor, UnlockProcessor>;
+    mfxFrameAllocator get() {
+        return m_allocator;
+    }
+private:
+    TestLockableAllocator(mfxFrameAllocator allocator) :
+        m_allocator(allocator) {
+    }
+
+    static mfxStatus MFX_CDECL lock_cb(mfxHDL, mfxMemId mid, mfxFrameData *ptr) {
+        auto it = lock_processor_table.find(mid);
+        EXPECT_TRUE(it != lock_processor_table.end());
+        return it->second(mid, ptr);
+    }
+    static mfxStatus MFX_CDECL unlock_cb(mfxHDL, mfxMemId mid, mfxFrameData *ptr) {
+        auto it = unlock_processor_table.find(mid);
+        EXPECT_TRUE(it != unlock_processor_table.end());
+        return it->second(mid, ptr);
+    }
+
+    template <class L, class U>
+    friend TestLockableAllocator<L,U> create_test_allocator(mfxMemId, L, U);
+
+    static std::map<mfxMemId, LockProcessor> lock_processor_table;
+    static std::map<mfxMemId, UnlockProcessor> unlock_processor_table;
+
+    mfxFrameAllocator m_allocator;
+};
+
+template <class LockProcessor, class UnlockProcessor>
+std::map<mfxMemId, UnlockProcessor> TestLockableAllocator<LockProcessor, UnlockProcessor>::lock_processor_table {};
+
+template <class LockProcessor, class UnlockProcessor>
+std::map<mfxMemId, UnlockProcessor> TestLockableAllocator<LockProcessor, UnlockProcessor>::unlock_processor_table {};
+
+template <class LockProcessor, class UnlockProcessor>
+TestLockableAllocator<LockProcessor, UnlockProcessor>
+create_test_allocator(mfxMemId mid, LockProcessor lock_p, UnlockProcessor unlock_p) {
+    mfxFrameAllocator allocator {};
+
+    TestLockableAllocator<LockProcessor, UnlockProcessor>::lock_processor_table[mid] = lock_p;
+    allocator.Lock = &TestLockableAllocator<LockProcessor, UnlockProcessor>::lock_cb;
+
+    TestLockableAllocator<LockProcessor, UnlockProcessor>::unlock_processor_table[mid] = unlock_p;
+    allocator.Unlock = &TestLockableAllocator<LockProcessor, UnlockProcessor>::unlock_cb;
+
+    return TestLockableAllocator<LockProcessor, UnlockProcessor> {allocator};
+}
 
 TEST(OneVPL_Source_Surface, InitSurface)
 {
@@ -526,6 +580,94 @@ TEST(OneVPL_Source_DX11_Accel, Init)
     EXPECT_NO_THROW(accel.deinit(mfx_session));
     MFXClose(mfx_session);
     MFXUnload(mfx_handle);
+}
+
+TEST(OneVPL_Source_DX11_FrameLockable, LockUnlock_without_Adaptee)
+{
+    using namespace cv::gapi::wip;
+    mfxMemId mid = 0;
+    int lock_counter = 0;
+    int unlock_counter = 0;
+
+    std::function<mfxStatus(mfxMemId, mfxFrameData *)> lock =
+    [&lock_counter] (mfxMemId, mfxFrameData *) {
+        lock_counter ++;
+        return MFX_ERR_NONE;
+    };
+    std::function<mfxStatus(mfxMemId, mfxFrameData *)> unlock =
+    [&unlock_counter] (mfxMemId, mfxFrameData *) {
+        unlock_counter++;
+        return MFX_ERR_NONE;
+    };
+
+    auto test_allocator = create_test_allocator(mid, lock, unlock);
+    LockAdapter adapter(test_allocator.get());
+
+    mfxFrameData data;
+    const int exec_count = 123;
+    for (int i = 0; i < exec_count; i ++) {
+        EXPECT_EQ(adapter.read_lock(mid, data), 0);
+        adapter.write_lock(mid, data);
+        EXPECT_EQ(adapter.unlock_read(mid, data), 0);
+        adapter.unlock_write(mid, data);
+    }
+
+    EXPECT_EQ(lock_counter, exec_count * 2);
+    EXPECT_EQ(unlock_counter, exec_count * 2);
+}
+
+TEST(OneVPL_Source_DX11_FrameLockable, LockUnlock_with_Adaptee)
+{
+    using namespace cv::gapi::wip;
+    mfxMemId mid = 0;
+    int r_lock_counter = 0;
+    int r_unlock_counter = 0;
+    int w_lock_counter = 0;
+    int w_unlock_counter = 0;
+
+    SharedLock adaptee;
+    std::function<mfxStatus(mfxMemId, mfxFrameData *)> lock =
+    [&r_lock_counter, &w_lock_counter, &adaptee] (mfxMemId, mfxFrameData *) {
+        if (adaptee.owns()) {
+            w_lock_counter ++;
+        } else {
+            r_lock_counter ++;
+        }
+        return MFX_ERR_NONE;
+    };
+    std::function<mfxStatus(mfxMemId, mfxFrameData *)> unlock =
+    [&r_unlock_counter, &w_unlock_counter, &adaptee] (mfxMemId, mfxFrameData *) {
+        if (adaptee.owns()) {
+            w_unlock_counter ++;
+        } else {
+            r_unlock_counter ++;
+        }
+        return MFX_ERR_NONE;
+    };
+
+    auto test_allocator = create_test_allocator(mid, lock, unlock);
+    LockAdapter adapter(test_allocator.get());
+
+    adapter.set_adaptee(&adaptee);
+
+    mfxFrameData data;
+    const int exec_count = 123;
+    for (int i = 0; i < exec_count; i ++) {
+        EXPECT_EQ(adapter.read_lock(mid, data), 0);
+        EXPECT_FALSE(adaptee.try_lock());
+
+        EXPECT_EQ(adapter.unlock_read(mid, data), 1);
+        EXPECT_TRUE(adaptee.try_lock());
+        adaptee.unlock();
+
+        adapter.write_lock(mid, data);
+        adapter.unlock_write(mid, data);
+    }
+
+    EXPECT_EQ(r_lock_counter, exec_count);
+    EXPECT_EQ(r_unlock_counter, exec_count);
+    EXPECT_EQ(w_lock_counter, exec_count);
+    EXPECT_EQ(w_unlock_counter, exec_count);
 }
 }
 } // namespace opencv_test

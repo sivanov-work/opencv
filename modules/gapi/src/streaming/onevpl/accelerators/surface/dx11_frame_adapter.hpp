@@ -35,12 +35,11 @@ namespace gapi {
 namespace wip {
 
 class Surface;
-class VPLMediaFrameDX11Adapter : public cv::MediaFrame::IAdapter,
-                                 public SharedLock {
+class VPLMediaFrameDX11Adapter final: public cv::MediaFrame::IAdapter,
+                                      public SharedLock {
 public:
     // GAPI_EXPORTS for tests
-    GAPI_EXPORTS VPLMediaFrameDX11Adapter(std::shared_ptr<Surface> assoc_surface,
-                                          mfxFrameAllocator alloc);
+    GAPI_EXPORTS VPLMediaFrameDX11Adapter(std::shared_ptr<Surface> assoc_surface);
     GAPI_EXPORTS ~VPLMediaFrameDX11Adapter();
     cv::GFrameDesc meta() const override;
     MediaFrame::View access(MediaFrame::Access) override;

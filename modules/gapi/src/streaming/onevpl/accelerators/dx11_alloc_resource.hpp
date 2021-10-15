@@ -32,18 +32,27 @@ namespace gapi {
 namespace wip {
 
 class SharedLock;
-struct LockAdapter {
-    size_t read_lock();
-    size_t unlock_read();
+struct GAPI_EXPORTS LockAdapter {
+    LockAdapter(mfxFrameAllocator origin_allocator);
 
-    void write_lock();
+    // GAPI_EXPORTS for tests
+    size_t read_lock(mfxMemId mid, mfxFrameData &data);
+    size_t unlock_read(mfxMemId mid, mfxFrameData &data);
+
+    void write_lock(mfxMemId mid, mfxFrameData &data);
     bool is_write_acquired();
-    void unlock_write();
+    void unlock_write(mfxMemId mid, mfxFrameData &data);
 
     SharedLock* set_adaptee(SharedLock* new_impl);
     SharedLock* get_adaptee();
 private:
-    SharedLock* impl = nullptr;
+    LockAdapter(const LockAdapter&) = delete;
+    LockAdapter(LockAdapter&&) = delete;
+    LockAdapter& operator= (const LockAdapter&) = delete;
+    LockAdapter& operator= (LockAdapter&&) = delete;
+
+    mfxFrameAllocator lockable_allocator;
+    SharedLock* impl;
 };
 
 struct DX11AllocationRecord;
@@ -52,6 +61,7 @@ struct DX11AllocationItem : public LockAdapter,
     using subresource_id_t = unsigned int;
 
     friend struct DX11AllocationRecord;
+    friend class elastic_barrier<DX11AllocationItem>;
     ~DX11AllocationItem();
 
     void release();
@@ -60,13 +70,10 @@ struct DX11AllocationItem : public LockAdapter,
     DX11AllocationItem::subresource_id_t get_subresource() const;
 
     CComPtr<ID3D11DeviceContext> get_device_ctx();
-    mfxFrameAllocator get_allocator();
 
-    // elastic barrier interface impl
-    void on_first_in_impl(mfxFrameData *ptr);
-    void on_last_out_impl(mfxFrameData *ptr);
-
-    // public transactional access to resources
+    // public transactional access to resources.
+    // implements dispatching through different access acquisition modes.
+    // current acquisition mode determined by `LockAdapter` with `is_write_acquired()`
     mfxStatus acquire_access(mfxFrameData *ptr);
     mfxStatus release_access(mfxFrameData *ptr);
 private:
@@ -77,13 +84,16 @@ private:
                        subresource_id_t subresource_id,
                        CComPtr<ID3D11Texture2D> staging_tex_ptr);
 
+    // elastic barrier interface impl
+    void on_first_in_impl(mfxFrameData *ptr);
+    void on_last_out_impl(mfxFrameData *ptr);
+
     mfxStatus shared_access_acquire_unsafe(mfxFrameData *ptr);
     mfxStatus shared_access_release_unsafe(mfxFrameData *ptr);
     mfxStatus exclusive_access_acquire_unsafe(mfxFrameData *ptr);
     mfxStatus exclusive_access_release_unsafe(mfxFrameData *ptr);
 
     CComPtr<ID3D11DeviceContext> shared_device_context;
-    mfxFrameAllocator shared_allocator_copy;
 
     CComPtr<ID3D11Texture2D> texture_ptr;
     subresource_id_t subresource_id = 0;

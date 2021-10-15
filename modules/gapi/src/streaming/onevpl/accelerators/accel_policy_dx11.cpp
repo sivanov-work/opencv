@@ -224,8 +224,7 @@ cv::MediaFrame::AdapterPtr VPLDX11AccelerationPolicy::create_frame_adapter(pool_
     }
 
     pool_t& requested_pool = pool_it->second;
-    return cv::MediaFrame::AdapterPtr{new VPLMediaFrameDX11Adapter(requested_pool.find_by_handle(surface),
-                                                                   allocator)};
+    return cv::MediaFrame::AdapterPtr{new VPLMediaFrameDX11Adapter(requested_pool.find_by_handle(surface))};
 }
 
 mfxStatus VPLDX11AccelerationPolicy::alloc_cb(mfxHDL pthis, mfxFrameAllocRequest *request,
@@ -241,10 +240,6 @@ mfxStatus VPLDX11AccelerationPolicy::alloc_cb(mfxHDL pthis, mfxFrameAllocRequest
 }
 
 mfxStatus VPLDX11AccelerationPolicy::lock_cb(mfxHDL pthis, mfxMemId mid, mfxFrameData *ptr) {
-    if (!pthis) {
-        return MFX_ERR_MEMORY_ALLOC;
-    }
-
     VPLDX11AccelerationPolicy *self = static_cast<VPLDX11AccelerationPolicy *>(pthis);
     GAPI_LOG_DEBUG(nullptr, "called from: " << self ? "Policy" : "Resource");
     cv::util::suppress_unused_warning(self);
@@ -252,10 +247,6 @@ mfxStatus VPLDX11AccelerationPolicy::lock_cb(mfxHDL pthis, mfxMemId mid, mfxFram
 }
 
 mfxStatus VPLDX11AccelerationPolicy::unlock_cb(mfxHDL pthis, mfxMemId mid, mfxFrameData *ptr) {
-    if (!pthis) {
-        return MFX_ERR_MEMORY_ALLOC;
-    }
-
     VPLDX11AccelerationPolicy *self = static_cast<VPLDX11AccelerationPolicy *>(pthis);
     GAPI_LOG_DEBUG(nullptr, "called from: " << self ? "Policy" : "Resource");
     cv::util::suppress_unused_warning(self);

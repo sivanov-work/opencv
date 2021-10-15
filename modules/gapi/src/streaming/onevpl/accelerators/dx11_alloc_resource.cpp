@@ -29,17 +29,67 @@ namespace cv {
 namespace gapi {
 namespace wip {
 
-size_t LockAdapter::read_lock() {
-    if(!impl) return 0;
-    return impl->shared_lock();
+LockAdapter::LockAdapter(mfxFrameAllocator origin_allocator) :
+    lockable_allocator(origin_allocator),
+    impl() {
+    GAPI_DbgAssert((lockable_allocator.Lock && lockable_allocator.Unlock) &&
+                   "Cannot create LockAdapter for empty origin allocator");
+
+    // abandon unusable c-allocator interfaces
+    // because LockAdapter requires Lock & Unlock only
+    lockable_allocator.Alloc = nullptr;
+    lockable_allocator.Free = nullptr;
+    lockable_allocator.pthis = nullptr;
 }
-size_t LockAdapter::unlock_read() {
-    if(!impl) return 0;
-    return impl->unlock_shared();
+
+size_t LockAdapter::read_lock(mfxMemId mid, mfxFrameData &data) {
+    size_t prev_lock_count = 0;
+    if (impl) {
+        prev_lock_count = impl->shared_lock();
+    }
+
+    // dispatch to VPL allocator using READ access mode
+    mfxStatus sts = MFX_ERR_LOCK_MEMORY;
+    try {
+        sts = lockable_allocator.Lock(nullptr, mid, &data);
+    } catch(...) {
+    }
+
+    // adapter will throw error if VPL frame allocator fails
+    if (sts != MFX_ERR_NONE) {
+        impl->unlock_shared();
+        GAPI_Assert(false && "Cannot lock frame on READ using VPL allocator");
+    }
+
+    return prev_lock_count;
 }
-void LockAdapter::write_lock() {
-    if(!impl) return;
-    return impl->lock();
+
+size_t LockAdapter::unlock_read(mfxMemId mid, mfxFrameData &data) {
+    GAPI_DbgAssert(!impl || !is_write_acquired() &&
+                   "Reject `unlock_read` in `write_lock` state");
+    lockable_allocator.Unlock(nullptr, mid, &data);
+    return impl ? impl->unlock_shared() : 0;
+}
+
+void LockAdapter::write_lock(mfxMemId mid, mfxFrameData &data) {
+    if (impl) {
+        // TODO consider using `try_lock` in loop with limited iteration count
+        // to prevent dead-lock with WARN at least notification
+        impl->lock();
+    }
+
+    // dispatch to VPL allocator using READ access mode
+    mfxStatus sts = MFX_ERR_LOCK_MEMORY;
+    try {
+        sts = lockable_allocator.Lock(nullptr, mid, &data);
+    } catch(...) {
+    }
+
+    // adapter will throw error if VPL frame allocator fails
+    if (sts != MFX_ERR_NONE) {
+        impl->unlock();
+        GAPI_Assert(false && "Cannot lock frame on WRITE using VPL allocator");
+    }
 }
 
 bool LockAdapter::is_write_acquired() {
@@ -47,9 +97,13 @@ bool LockAdapter::is_write_acquired() {
     return impl->owns();
 }
 
-void LockAdapter::unlock_write() {
-    if(!impl) return;
-    return impl->unlock();
+void LockAdapter::unlock_write(mfxMemId mid, mfxFrameData &data) {
+    GAPI_DbgAssert(is_write_acquired() &&
+                   "Reject `unlock_write` for unlocked state");
+    lockable_allocator.Unlock(nullptr, mid, &data);
+    if (impl) {
+        impl->unlock();
+    }
 }
 
 SharedLock* LockAdapter::set_adaptee(SharedLock* new_impl) {
@@ -68,8 +122,8 @@ DX11AllocationItem::DX11AllocationItem(std::weak_ptr<DX11AllocationRecord> paren
                                        CComPtr<ID3D11Texture2D> tex_ptr,
                                        subresource_id_t subtex_id,
                                        CComPtr<ID3D11Texture2D> staging_tex_ptr) :
+    LockAdapter(origin_allocator),
     shared_device_context(origin_ctx),
-    shared_allocator_copy(origin_allocator),
     texture_ptr(tex_ptr),
     subresource_id(subtex_id),
     staging_texture_ptr(staging_tex_ptr),
@@ -109,10 +163,6 @@ DX11AllocationItem::subresource_id_t DX11AllocationItem::get_subresource() const
 
 CComPtr<ID3D11DeviceContext> DX11AllocationItem::get_device_ctx() {
     return shared_device_context;
-}
-
-mfxFrameAllocator DX11AllocationItem::get_allocator() {
-    return shared_allocator_copy;
 }
 
 void DX11AllocationItem::on_first_in_impl(mfxFrameData *ptr) {

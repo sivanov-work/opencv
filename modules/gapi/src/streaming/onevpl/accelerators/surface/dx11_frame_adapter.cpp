@@ -21,10 +21,27 @@ namespace cv {
 namespace gapi {
 namespace wip {
 
-VPLMediaFrameDX11Adapter::VPLMediaFrameDX11Adapter(std::shared_ptr<Surface> surface,
-                                                   mfxFrameAllocator alloc):
-    parent_surface_ptr(surface),
-    allocator(alloc) {
+
+void lock_mid(mfxMemId mid, mfxFrameData &data, MediaFrame::Access mode) {
+    LockAdapter* alloc_data = reinterpret_cast<LockAdapter *>(mid);
+    if (mode == MediaFrame::Access::R) {
+        alloc_data->read_lock(mid, data);
+    } else {
+        alloc_data->write_lock(mid, data);
+    }
+}
+
+void unlock_mid(mfxMemId mid, mfxFrameData &data, MediaFrame::Access mode) {
+    LockAdapter* alloc_data = reinterpret_cast<LockAdapter*>(data.MemId);
+    if (mode == MediaFrame::Access::R) {
+        alloc_data->unlock_read(mid, data);
+    } else {
+        alloc_data->unlock_write(mid, data);
+    }
+}
+
+VPLMediaFrameDX11Adapter::VPLMediaFrameDX11Adapter(std::shared_ptr<Surface> surface):
+    parent_surface_ptr(surface) {
 
     GAPI_Assert(parent_surface_ptr && "Surface is nullptr");
     parent_surface_ptr->obtain_lock();
@@ -76,44 +93,21 @@ MediaFrame::View VPLMediaFrameDX11Adapter::access(MediaFrame::Access mode) {
 
     Surface::data_t& data = parent_surface_ptr->get_data();
     const Surface::info_t& info = parent_surface_ptr->get_info();
+    void* frame_id = reinterpret_cast<void*>(this);
 
     GAPI_LOG_DEBUG(nullptr, "START lock frame in surface: " << parent_surface_ptr->get_handle() <<
-                            ", frame: " << this);
+                            ", frame id: " << frame_id);
 
     // lock MT
-    LockAdapter* alloc_data = reinterpret_cast<LockAdapter *>(data.MemId);
-    if (mode == MediaFrame::Access::R) {
-        alloc_data->read_lock();
-    } else {
-        alloc_data->write_lock();
-    }
-
-    mfxStatus sts = MFX_ERR_LOCK_MEMORY;
-    try {
-        sts = allocator.Lock(allocator.pthis, data.MemId, &data);
-    } catch(...) {}
-
-    if (sts != MFX_ERR_NONE) {
-        // unlock MT
-        if (mode == MediaFrame::Access::R) {
-            alloc_data->unlock_read();
-        } else {
-            alloc_data->unlock_write();
-        }
-        throw std::runtime_error("Cannot lock frame");
-    }
+    lock_mid(data.MemId, data, mode);
 
     GAPI_LOG_DEBUG(nullptr, "FINISH lock frame in surface: " << parent_surface_ptr->get_handle() <<
-                            ", frame: " << this);
+                            ", frame id: " << frame_id);
     using stride_t = typename cv::MediaFrame::View::Strides::value_type;
-    GAPI_Assert(data.Pitch >= 0 && "Pitch is less than 0");
-
     stride_t pitch = static_cast<stride_t>(data.Pitch);
 
     //TODO
     auto parent_surface_ptr_copy = parent_surface_ptr;
-    mfxFrameAllocator allocator_copy = allocator;
-    void* this_ptr_copy = reinterpret_cast<void*>(this);
     switch(info.FourCC) {
         case MFX_FOURCC_I420:
         {
@@ -130,24 +124,17 @@ MediaFrame::View VPLMediaFrameDX11Adapter::access(MediaFrame::Access mode) {
                     pitch / 2, 0u
                 };
             return cv::MediaFrame::View(std::move(pp), std::move(ss),
-                                        [allocator_copy, parent_surface_ptr_copy,
-                                         this_ptr_copy, mode] () {
+                                        [parent_surface_ptr_copy,
+                                         frame_id, mode] () {
                 parent_surface_ptr_copy->obtain_lock();
 
                 auto& data = parent_surface_ptr_copy->get_data();
                 GAPI_LOG_DEBUG(nullptr, "START unlock frame in surface: " << parent_surface_ptr_copy->get_handle() <<
-                                        ", frame: " << this_ptr_copy);
-                allocator_copy.Unlock(allocator_copy.pthis, data.MemId, &data);
-
-                LockAdapter* alloc_data = reinterpret_cast<LockAdapter*>(data.MemId);
-                if (mode == MediaFrame::Access::R) {
-                    alloc_data->unlock_read();
-                } else {
-                    alloc_data->unlock_write();
-                }
+                                        ", frame id: " << frame_id);
+                unlock_mid(data.MemId, data, mode);
 
                 GAPI_LOG_DEBUG(nullptr, "FINISH unlock frame in surface: " << parent_surface_ptr_copy->get_handle() <<
-                                        ", frame: " << this_ptr_copy);
+                                        ", frame id: " << frame_id);
 
                 parent_surface_ptr_copy->release_lock();
             });
@@ -156,7 +143,7 @@ MediaFrame::View VPLMediaFrameDX11Adapter::access(MediaFrame::Access mode) {
         {
             if (!data.Y || !data.UV) {
                 GAPI_LOG_WARNING(nullptr, "Empty data detected!!! for surface: " << parent_surface_ptr->get_handle() <<
-                                          ", frame: " << this);
+                                          ", frame id: " << frame_id);
             }
             GAPI_Assert(data.Y && data.UV && "MFX_FOURCC_NV12 frame data is nullptr");
             cv::MediaFrame::View::Ptrs pp = {
@@ -168,22 +155,17 @@ MediaFrame::View VPLMediaFrameDX11Adapter::access(MediaFrame::Access mode) {
                     pitch, 0u, 0u
                 };
             return cv::MediaFrame::View(std::move(pp), std::move(ss),
-                                        [allocator_copy, parent_surface_ptr_copy,
-                                         this_ptr_copy, mode] () {
+                                        [parent_surface_ptr_copy,
+                                         frame_id, mode] () {
                 parent_surface_ptr_copy->obtain_lock();
 
                 auto& data = parent_surface_ptr_copy->get_data();
                 GAPI_LOG_DEBUG(nullptr, "START unlock frame in surface: " << parent_surface_ptr_copy->get_handle() <<
-                                        ", frame: " << this_ptr_copy);
-                allocator_copy.Unlock(allocator_copy.pthis, data.MemId, &data);
-                LockAdapter* alloc_data = reinterpret_cast<LockAdapter*>(data.MemId);
-                if (mode == MediaFrame::Access::R) {
-                    alloc_data->unlock_read();
-                } else {
-                    alloc_data->unlock_write();
-                }
+                                        ", frame id: " << frame_id);
+                unlock_mid(data.MemId, data, mode);
+
                 GAPI_LOG_DEBUG(nullptr, "FINISH unlock frame in surface: " << parent_surface_ptr_copy->get_handle() <<
-                                        ", frame: " << this_ptr_copy);
+                                        ", frame id: " << frame_id);
                 parent_surface_ptr_copy->release_lock();
             });
         }
