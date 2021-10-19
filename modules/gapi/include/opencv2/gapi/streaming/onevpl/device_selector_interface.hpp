@@ -28,7 +28,7 @@ enum class AccelType : uint8_t {
     LAST_VALUE = std::numeric_limits<uint8_t>::max()
 };
 
-const char* to_cstring(AccelType type);
+GAPI_EXPORTS const char* to_cstring(AccelType type);
 
 struct IDeviceSelector;
 struct GAPI_EXPORTS Device {
