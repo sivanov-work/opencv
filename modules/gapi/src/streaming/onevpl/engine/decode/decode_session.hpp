@@ -37,11 +37,11 @@ public:
     void swap_surface(VPLLegacyDecodeEngineAsync& engine);
     void init_surface_pool(VPLAccelerationPolicy::pool_key_t key);
 
+    Data::Meta generate_frame_meta();
+    const mfxVideoParam& get_video_param() const override;
+private:
     mfxVideoParam mfx_decoder_param;
     std::shared_ptr<IDataProvider> data_provider;
-
-    Data::Meta generate_frame_meta();
-private:
     VPLAccelerationPolicy::pool_key_t decoder_pool_id;
     mfxFrameAllocRequest request;
 

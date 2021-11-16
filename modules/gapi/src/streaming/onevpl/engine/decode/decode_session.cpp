@@ -51,6 +51,7 @@ void LegacyDecodeSessionAsync::swap_surface(VPLLegacyDecodeEngineAsync& engine) 
     } catch (const std::exception& ex) {
         GAPI_LOG_WARNING(nullptr, "[" << session << "] error: " << ex.what() <<
                                    "Abort");
+        throw ;
     }
 }
 
@@ -68,6 +69,10 @@ Data::Meta LegacyDecodeSessionAsync::generate_frame_meta() {
                         {cv::gapi::streaming::meta_tag::seq_id, int64_t{decoded_frames_count++}}
                     };
     return meta;
+}
+
+const mfxVideoParam& LegacyDecodeSessionAsync::get_video_param() const {
+    return mfx_decoder_param;
 }
 } // namespace wip
 } // namespace gapi

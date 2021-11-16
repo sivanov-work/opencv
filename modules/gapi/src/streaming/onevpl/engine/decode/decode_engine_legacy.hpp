@@ -31,8 +31,9 @@ class VPLLegacyDecodeEngineAsync : public ProcessingEngineBase {
 public:
 
     VPLLegacyDecodeEngineAsync(std::unique_ptr<VPLAccelerationPolicy>&& accel);
-    void initialize_session(mfxSession mfx_session, DecoderParams&& decoder_param,
-                            std::shared_ptr<IDataProvider> provider) override;
+    std::shared_ptr<EngineSession> initialize_session(mfxSession mfx_session,
+                                                      const std::vector<oneVPL_cfg_param>& cfg_params,
+                                                      std::shared_ptr<IDataProvider> provider) override;
 
 private:
     ExecutionStatus execute_op(operation_t& op, EngineSession& sess) override;

@@ -9,6 +9,7 @@
 
 #include <queue>
 #include "streaming/onevpl/engine/engine_session.hpp"
+#include <opencv2/gapi/streaming/onevpl/onevpl_cfg_params.hpp>
 #include "opencv2/gapi/own/exports.hpp" // GAPI_EXPORTS
 
 namespace cv {
@@ -45,9 +46,9 @@ public:
     ProcessingEngineBase(std::unique_ptr<VPLAccelerationPolicy>&& accel);
     virtual ~ProcessingEngineBase();
 
-    virtual void initialize_session(mfxSession mfx_session,
-                                    DecoderParams&& decoder_param,
-                                    std::shared_ptr<IDataProvider> provider) = 0;
+    virtual std::shared_ptr<EngineSession> initialize_session(mfxSession mfx_session,
+                                                              const std::vector<oneVPL_cfg_param>& cfg_params,
+                                                              std::shared_ptr<IDataProvider> provider) = 0;
 
     ExecutionStatus process(mfxSession session);
     size_t get_ready_frames_count() const;

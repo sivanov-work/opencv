@@ -73,6 +73,7 @@ OneVPLSource::Priv::Priv(std::shared_ptr<IDataProvider> provider, const std::vec
         this->mfx_handle_configs.resize(cfg_params.size());
 
         // Set handle config params
+        GAPI_LOG_INFO(nullptr, "Creating VPL config from input params");
         auto cfg_param_it = cfg_params.begin();
         for (mfxConfig& cfg_inst : mfx_handle_configs) {
             cfg_inst = MFXCreateConfig(mfx_handle);
@@ -85,6 +86,7 @@ OneVPLSource::Priv::Priv(std::shared_ptr<IDataProvider> provider, const std::vec
                 ++cfg_param_it;
                 continue;
             }
+            GAPI_LOG_DEBUG(nullptr, "Apply major param: " << cfg_param_it->get_name());
             mfxVariant mfx_param = cfg_param_to_mfx_variant(*cfg_param_it);
             mfxStatus sts = MFXSetConfigFilterProperty(cfg_inst,
                                                        (mfxU8 *)cfg_param_it->get_name().c_str(),
@@ -181,15 +183,6 @@ OneVPLSource::Priv::Priv(std::shared_ptr<IDataProvider> provider, const std::vec
 
         // initialize decoder
         try {
-            // Find codec ID from config
-            auto dec_it = std::find_if(cfg_params.begin(), cfg_params.end(), [] (const oneVPL_cfg_param& value)
-            {
-                return value.get_name() == "mfxImplDescription.mfxDecoderDescription.decoder.CodecID";
-            });
-            if (dec_it == cfg_params.end()) {
-                throw std::logic_error("Cannot determine DecoderID from oneVPL config. Abort");
-            }
-
             // create session driving engine if required
             if (!engine) {
 
@@ -209,12 +202,28 @@ OneVPLSource::Priv::Priv(std::shared_ptr<IDataProvider> provider, const std::vec
                 }
             }
 
-            //create decoder for session accoring to header recovered from source file
-            DecoderParams decoder_param = create_decoder_from_file(*dec_it, provider);
-
             // create engine session for processing mfx session pipeline
-            engine->initialize_session(mfx_session, std::move(decoder_param),
-                                                    provider);
+            auto engine_session_ptr = engine->initialize_session(mfx_session, cfg_params,
+                                                                 provider);
+
+            const mfxVideoParam& video_param = engine_session_ptr->get_video_param();
+
+            // set valid description
+            description.size = cv::Size {
+                            video_param.mfx.FrameInfo.Width,
+                            video_param.mfx.FrameInfo.Height};
+            switch(video_param.mfx.FrameInfo.FourCC) {
+                case MFX_FOURCC_I420:
+                    throw std::runtime_error("Cannot parse GMetaArg description: MediaFrame doesn't support I420 type");
+                case MFX_FOURCC_NV12:
+                    description.fmt = cv::MediaFormat::NV12;
+                    break;
+                default:
+                    throw std::runtime_error("Cannot parse GMetaArg description: MediaFrame unknown 'fmt' type: " +
+                                     std::to_string(video_param.mfx.FrameInfo.FourCC));
+            }
+            description_is_valid = true;
+
         } catch(const std::exception& ex) {
             std::stringstream ss;
             ss << ex.what() << ". Unload VPL session: " << mfx_session;
@@ -237,71 +246,10 @@ OneVPLSource::Priv::Priv(std::shared_ptr<IDataProvider> provider, const std::vec
 
 OneVPLSource::Priv::~Priv()
 {
+    engine.reset();
+
     GAPI_LOG_INFO(nullptr, "Unload MFX handle: " << mfx_handle);
     MFXUnload(mfx_handle);
-}
-
-DecoderParams OneVPLSource::Priv::create_decoder_from_file(const oneVPL_cfg_param& decoder_cfg,
-                                                      std::shared_ptr<IDataProvider> provider)
-{
-    GAPI_DbgAssert(provider && "Cannot create decoder, data provider is nullptr");
-
-    mfxBitstream bitstream{};
-    const int BITSTREAM_BUFFER_SIZE = 2000000;
-    bitstream.MaxLength = BITSTREAM_BUFFER_SIZE;
-    bitstream.Data = (mfxU8 *)calloc(bitstream.MaxLength, sizeof(mfxU8));
-    if(!bitstream.Data) {
-        throw std::runtime_error("Cannot allocate bitstream.Data bytes: " +
-                                 std::to_string(bitstream.MaxLength * sizeof(mfxU8)));
-    }
-
-    mfxVariant decoder = cfg_param_to_mfx_variant(decoder_cfg);
-    // according to oneVPL documentation references
-    // https://spec.oneapi.io/versions/latest/elements/oneVPL/source/API_ref/VPL_disp_api_struct.html
-    // mfxVariant is an `union` type and considered different meaning for different param ids
-    // So CodecId has U32 data type
-    bitstream.CodecId = decoder.Data.U32;
-
-    mfxStatus sts = ReadEncodedStream(bitstream, provider);
-    if(MFX_ERR_NONE != sts) {
-        throw std::runtime_error("Error reading bitstream, error: " +
-                                 mfxstatus_to_string(sts));
-    }
-
-    // Retrieve the frame information from input stream
-    mfxVideoParam mfxDecParams {};
-    mfxDecParams.mfx.CodecId = decoder.Data.U32;
-    mfxDecParams.IOPattern   = MFX_IOPATTERN_OUT_SYSTEM_MEMORY;//MFX_IOPATTERN_OUT_VIDEO_MEMORY;
-    sts = MFXVideoDECODE_DecodeHeader(mfx_session, &bitstream, &mfxDecParams);
-    if(MFX_ERR_NONE != sts) {
-        throw std::runtime_error("Error decoding header, error: " +
-                                 mfxstatus_to_string(sts));
-    }
-
-    // Input parameters finished, now initialize decode
-    sts = MFXVideoDECODE_Init(mfx_session, &mfxDecParams);
-    if (MFX_ERR_NONE != sts) {
-        throw std::runtime_error("Error initializing Decode, error: " +
-                                 mfxstatus_to_string(sts));
-    }
-
-    // set valid description
-    description.size = cv::Size {
-                            mfxDecParams.mfx.FrameInfo.Width,
-                            mfxDecParams.mfx.FrameInfo.Height};
-    switch(mfxDecParams.mfx.FrameInfo.FourCC) {
-        case MFX_FOURCC_I420:
-            throw std::runtime_error("Cannot parse GMetaArg description: MediaFrame doesn't support I420 type");
-        case MFX_FOURCC_NV12:
-            description.fmt = cv::MediaFormat::NV12;
-            break;
-        default:
-            throw std::runtime_error("Cannot parse GMetaArg description: MediaFrame unknown 'fmt' type: " +
-                                     std::to_string(mfxDecParams.mfx.FrameInfo.FourCC));
-    }
-    description_is_valid = true;
-
-    return {bitstream, mfxDecParams};
 }
 
 std::unique_ptr<VPLAccelerationPolicy> OneVPLSource::Priv::initializeHWAccel()
